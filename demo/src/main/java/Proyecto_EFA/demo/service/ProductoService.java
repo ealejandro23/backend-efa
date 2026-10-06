@@ -60,9 +60,9 @@ public class ProductoService {
             if (productoDetails.getTallas() != null) {
                 producto.setTallas(productoDetails.getTallas());
             }
-            if (productoDetails.getImagenes() != null){
-                producto.setImagenes(productoDetails.getImagenes());
-            }
+            // imagenes tiene orphanRemoval y es @JsonIgnore: nunca viene en el JSON y
+            // reemplazar la colección rompía Hibernate ("collection with orphan deletion
+            // was no longer referenced") en todo PUT/PATCH. Se gestiona desde ImagenService.
             if (productoDetails.getImagenUrl() != null) {
                 producto.setImagenUrl(productoDetails.getImagenUrl());
             }

@@ -45,9 +45,10 @@ public class VentaService {
             if (ventaDetails.getMetodoEnvio() != null) {
                 venta.setMetodoEnvio(ventaDetails.getMetodoEnvio());
             }
-            if (ventaDetails.getItems() != null) {
-                venta.setItems(ventaDetails.getItems());
-            }
+            // items tiene orphanRemoval y es @JsonIgnore: nunca viene en el JSON y
+            // reemplazar la colección rompía Hibernate ("collection with orphan deletion
+            // was no longer referenced") en todo PUT/PATCH. Los ítems se gestionan
+            // desde /api/v1/producto-ventas.
             return ventaRepository.save(venta);
         }
         return null;

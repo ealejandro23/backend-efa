@@ -49,7 +49,9 @@ public class UsuarioController {
         String identifier = usuario.getCorreo() != null && !usuario.getCorreo().isEmpty() ? usuario.getCorreo() : usuario.getNombre();
         Usuario login = usuarioService.login(identifier, usuario.getContrasena());
         if (login != null) {
-            login.setContrasena(null);
+            // La contraseña no se serializa (@JsonProperty(WRITE_ONLY) en Usuario),
+            // por lo que no hace falta anularla (anularla dentro de la transacción del
+            // servicio violaba la restricción NOT NULL de la columna).
             return ResponseEntity.ok(login);
         } else {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Credenciales inválidas");

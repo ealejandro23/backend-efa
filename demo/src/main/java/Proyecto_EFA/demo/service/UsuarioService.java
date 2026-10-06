@@ -19,21 +19,19 @@ public class UsuarioService {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    // NOTA: nunca se anula la contraseña en estos métodos de lectura. La columna
+    // contrasenaUsuario es NOT NULL y, al hacerlo dentro de la transacción, Hibernate
+    // intentaba persistir NULL y respondía 500. Además, el campo ya está marcado con
+    // @JsonProperty(WRITE_ONLY) en el modelo, por lo que jamás se serializa en las
+    // respuestas JSON (la protección se mantiene sin tocar la base de datos).
+
     // CRUD básico
     public List<Usuario> getAllUsers() {
-        List<Usuario> usuarios = usuarioRepository.findAll();
-        for (Usuario usuario : usuarios) {
-            usuario.setContrasena(null);
-        }
-        return usuarios;
+        return usuarioRepository.findAll();
     }
 
     public Usuario findById(Integer id) {
-        Usuario usuario = usuarioRepository.findById(id).orElse(null);
-        if (usuario != null) {
-            usuario.setContrasena(null);
-        }
-        return usuario;
+        return usuarioRepository.findById(id).orElse(null);
     }      
 
     public Usuario login(String nombreUsuario, String contrasena) {
@@ -42,21 +40,30 @@ public class UsuarioService {
             usuario = usuarioRepository.findByCorreo(nombreUsuario);
         }
         if (usuario != null && passwordEncoder.matches(contrasena, usuario.getContrasena())) {
-            usuario.setContrasena(null);
             return usuario;
         }
         return null;
     }
 
     public List<Usuario> searchByNombre(String nombre) {
-        List<Usuario> usuarios = usuarioRepository.findByNombreContainingIgnoreCase(nombre);
-        for (Usuario u : usuarios) {
-            u.setContrasena(null);
-        }
-        return usuarios;
+        return usuarioRepository.findByNombreContainingIgnoreCase(nombre);
     }
 
     public Usuario updateUsuario(Usuario usuario) {
+        // Sustitución completa (PUT). La columna contrasenaUsuario es NOT NULL, por lo
+        // que si el cuerpo no trae contraseña debemos conservar la guardada (antes el
+        // PUT respondía 500). Si el id no existe, devolvemos null para que el
+        // controlador responda 404 (rama que ya existía).
+        if (usuario.getId() == null) {
+            return save(usuario);
+        }
+        Usuario existente = usuarioRepository.findById(usuario.getId()).orElse(null);
+        if (existente == null) {
+            return null;
+        }
+        if (usuario.getContrasena() == null) {
+            usuario.setContrasena(existente.getContrasena());
+        }
         return save(usuario);
     }
 
@@ -98,43 +105,23 @@ public class UsuarioService {
     
     // Métodos de búsqueda avanzados
     public List<Usuario> getUsuariosByRol(Integer rolId) {
-        List<Usuario> usuarios = usuarioRepository.findByRolId(rolId);
-        for (Usuario u : usuarios) {
-            u.setContrasena(null);
-        }
-        return usuarios;
+        return usuarioRepository.findByRolId(rolId);
     }
     
     public List<Usuario> getUsuariosByComuna(Integer comunaId) {
-        List<Usuario> usuarios = usuarioRepository.findByComunaId(comunaId);
-        for (Usuario u : usuarios) {
-            u.setContrasena(null);
-        }
-        return usuarios;
+        return usuarioRepository.findByComunaId(comunaId);
     }
     
     public List<Usuario> getUsuariosByRegion(Integer regionId) {
-        List<Usuario> usuarios = usuarioRepository.findByRegionId(regionId);
-        for (Usuario u : usuarios) {
-            u.setContrasena(null);
-        }
-        return usuarios;
+        return usuarioRepository.findByRegionId(regionId);
     }
     
     public List<Usuario> getAllAdmins() {
-        List<Usuario> admins = usuarioRepository.findAllAdmins();
-        for (Usuario u : admins) {
-            u.setContrasena(null);
-        }
-        return admins;
+        return usuarioRepository.findAllAdmins();
     }
     
     public List<Usuario> getAllCustomers() {
-        List<Usuario> customers = usuarioRepository.findAllCustomers();
-        for (Usuario u : customers) {
-            u.setContrasena(null);
-        }
-        return customers;
+        return usuarioRepository.findAllCustomers();
     }
     
     public int countByRol(Integer rolId) {

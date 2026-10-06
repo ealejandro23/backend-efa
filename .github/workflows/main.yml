@@ -1,0 +1,90 @@
+name: CI — Tests, Calidad y Seguridad
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:            # permite ejecutarlo manualmente desde la pestaña Actions
+
+jobs:
+  build-test-analyze:
+    runs-on: ubuntu-latest
+    # NOTA (adaptación a este proyecto):
+    # La guía usaba un servicio MySQL porque el proyecto "bdget" lo necesitaba.
+    # Este proyecto usa H2 en memoria por defecto en los tests
+    # (ver demo/src/main/resources/application.properties), por lo que no se
+    # requiere ningún servicio de base de datos en el pipeline.
+    steps:
+      # ── 1. Descargar el código ──
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # SonarCloud necesita el historial completo
+
+      # ── 2. Configurar Java 17 ──
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: demo/pom.xml
+
+      # ── 3. Ejecutar tests + generar reporte JaCoCo ──
+      - name: Ejecutar tests
+        working-directory: demo
+        run: mvn -B -ntp test
+
+      # ── 4. Subir reporte de cobertura como artefacto ──
+      - name: Subir reporte JaCoCo
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: demo/target/site/jacoco/
+
+      # ── 5. Analizar con SonarCloud ──
+      - name: Análisis SonarCloud
+        working-directory: demo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # automático, no lo crees tú
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B -ntp sonar:sonar \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY || 'ealejandro23_backend-efa' }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION || 'ealejandro23' }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+
+      # ── 6. Escanear dependencias con Snyk ──
+      # --all-projects porque el pom.xml vive en la subcarpeta demo/ (no en la raíz)
+      - name: Escaneo de vulnerabilidades Snyk (dependencias)
+        uses: snyk/actions/maven@master
+        continue-on-error: true           # no bloquea el pipeline si hay vulnerabilidades
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --all-projects --severity-threshold=high  # solo reporta Critical y High
+
+      # ── 7. Compilar el .jar ──
+      - name: Build del proyecto
+        working-directory: demo
+        run: mvn -B -ntp package -DskipTests
+
+      # ── 8. Construir imagen Docker ──
+      - name: Build de la imagen Docker
+        run: docker build -t proyectoooo-app:latest .
+
+      # ── 9. Escanear imagen Docker con Snyk ──
+      - name: Escaneo de imagen Docker con Snyk
+        uses: snyk/actions/docker@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: proyectoooo-app:latest
+          args: --severity-threshold=high
+
+      # NOTA: El paso de push a DockerHub de la guía se omite a propósito.
+      # El despliegue de imágenes de este repositorio lo realiza
+      # .github/workflows/deploy.yml hacia AWS ECR/EC2.
