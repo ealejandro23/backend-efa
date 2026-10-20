@@ -1,3 +1,4 @@
+
 package Proyecto_EFA.demo.model;
 
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -27,6 +29,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class Venta {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -36,7 +39,11 @@ public class Venta {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "usuario_id", nullable = false)
-    @JsonIgnoreProperties({"ventas", "hibernateLazyInitializer", "handler"})
+    @JsonIgnoreProperties({
+        "ventas",
+        "hibernateLazyInitializer",
+        "handler"
+    })
     private Usuario usuario;
 
     @ManyToOne
@@ -57,15 +64,32 @@ public class Venta {
     @Column(nullable = false)
     private Double total;
 
-    @OneToMany(mappedBy = "venta", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(
+        mappedBy = "venta",
+        cascade = CascadeType.ALL,
+        orphanRemoval = true
+    )
     @JsonIgnore
     private List<ProductoVenta> items = new ArrayList<>();
 
     @PrePersist
     @PreUpdate
     public void calcularTotal() {
+
+        // Evitar NullPointerException cuando la lista no existe
+        if (items == null || items.isEmpty()) {
+            this.total = 0.0;
+            return;
+        }
+
+        // Calcular el total de los productos existentes
         this.total = items.stream()
-                .mapToDouble(item -> item.getSubtotal() != null ? item.getSubtotal() : 0)
-                .sum();
+            .filter(item -> item != null)
+            .mapToDouble(item ->
+                item.getSubtotal() != null
+                    ? item.getSubtotal()
+                    : 0.0
+            )
+            .sum();
     }
 }
