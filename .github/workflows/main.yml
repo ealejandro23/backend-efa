@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Descargar código
+
+      # 1. Obtener código
       - name: Checkout del repositorio
         uses: actions/checkout@v4
         with:
@@ -32,18 +33,18 @@ jobs:
           cache: maven
           cache-dependency-path: demo/pom.xml
 
-      # 3. Configurar Node para Snyk
+      # 3. Configurar Node.js
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      # 4. Ejecutar pruebas y generar JaCoCo
+      # 4. Pruebas JUnit y JaCoCo
       - name: Ejecutar pruebas JUnit y JaCoCo
         working-directory: demo
         run: mvn -B -ntp clean verify
 
-      # 5. Publicar reporte JaCoCo
+      # 5. Publicar cobertura
       - name: Subir reporte JaCoCo
         uses: actions/upload-artifact@v4
         with:
@@ -65,11 +66,11 @@ jobs:
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
             -Dsonar.qualitygate.wait=true
 
-      # 7. Instalar Snyk CLI
+      # 7. Instalar Snyk
       - name: Instalar Snyk CLI
         run: npm install -g snyk
 
-      # 8. Escanear dependencias Maven
+      # 8. Seguridad de dependencias
       - name: Escaneo Snyk de dependencias
         working-directory: demo
         env:
@@ -80,12 +81,11 @@ jobs:
             --package-manager=maven \
             --severity-threshold=high
 
-      # 9. Construir imagen Docker
+      # 9. Construir Docker
       - name: Build de imagen Docker
-        run: |
-          docker build -t proyecto-efa-backend:latest .
+        run: docker build -t proyecto-efa-backend:latest .
 
-      # 10. Escanear imagen Docker
+      # 10. Seguridad de contenedores
       - name: Escaneo Snyk de imagen Docker
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -94,7 +94,7 @@ jobs:
             --file=Dockerfile \
             --severity-threshold=high
 
-      # 11. Verificar imagen generada
+      # 11. Verificar imagen
       - name: Verificar imagen Docker
         run: docker image inspect proyecto-efa-backend:latest
 
