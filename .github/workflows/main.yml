@@ -1,3 +1,4 @@
+
 name: CI — Tests, Calidad y Seguridad
 
 on:
@@ -5,86 +6,105 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:            # permite ejecutarlo manualmente desde la pestaña Actions
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-test-analyze:
+    name: Build, Tests, Calidad y Seguridad
     runs-on: ubuntu-latest
-    # NOTA (adaptación a este proyecto):
-    # La guía usaba un servicio MySQL porque el proyecto "bdget" lo necesitaba.
-    # Este proyecto usa H2 en memoria por defecto en los tests
-    # (ver demo/src/main/resources/application.properties), por lo que no se
-    # requiere ningún servicio de base de datos en el pipeline.
+
     steps:
-      # ── 1. Descargar el código ──
+      # 1. Descargar código
       - name: Checkout del repositorio
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # SonarCloud necesita el historial completo
+          fetch-depth: 0
 
-      # ── 2. Configurar Java 17 ──
-      - name: Configurar Java 17
-        uses: actions/setup-java@v4
+      # 2. Configurar Java
+      - name: Configurar Java 21
+        uses: actions/setup-java@v5
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: '21'
           cache: maven
           cache-dependency-path: demo/pom.xml
 
-      # ── 3. Ejecutar tests + generar reporte JaCoCo ──
-      - name: Ejecutar tests
-        working-directory: demo
-        run: mvn -B -ntp test
+      # 3. Configurar Node para Snyk
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      # ── 4. Subir reporte de cobertura como artefacto ──
+      # 4. Ejecutar pruebas y generar JaCoCo
+      - name: Ejecutar pruebas JUnit y JaCoCo
+        working-directory: demo
+        run: mvn -B -ntp clean verify
+
+      # 5. Publicar reporte JaCoCo
       - name: Subir reporte JaCoCo
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-report
           path: demo/target/site/jacoco/
+          if-no-files-found: error
 
-      # ── 5. Analizar con SonarCloud ──
+      # 6. Análisis SonarCloud
       - name: Análisis SonarCloud
         working-directory: demo
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # automático, no lo crees tú
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           mvn -B -ntp org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY || 'ealejandro23_backend-efa' }} \
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION || 'ealejandro23' }} \
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY || 'ealejandro23_backend-efa' }} \
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION || 'ealejandro23' }} \
             -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.qualitygate.wait=true
 
-      # ── 6. Escanear dependencias con Snyk ──
-      # --all-projects porque el pom.xml vive en la subcarpeta demo/ (no en la raíz)
-      - name: Escaneo de vulnerabilidades Snyk (dependencias)
-        uses: snyk/actions/maven@master
-        continue-on-error: true           # no bloquea el pipeline si hay vulnerabilidades
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --all-projects --severity-threshold=high  # solo reporta Critical y High
+      # 7. Instalar Snyk CLI
+      - name: Instalar Snyk CLI
+        run: npm install -g snyk
 
-      # ── 7. Compilar el .jar ──
-      - name: Build del proyecto
+      # 8. Escanear dependencias Maven
+      - name: Escaneo Snyk de dependencias
         working-directory: demo
-        run: mvn -B -ntp package -DskipTests
-
-      # ── 8. Construir imagen Docker ──
-      - name: Build de la imagen Docker
-        run: docker build -t proyectoooo-app:latest .
-
-      # ── 9. Escanear imagen Docker con Snyk ──
-      - name: Escaneo de imagen Docker con Snyk
-        uses: snyk/actions/docker@master
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: proyectoooo-app:latest
-          args: --severity-threshold=high
+        run: |
+          snyk test \
+            --file=pom.xml \
+            --package-manager=maven \
+            --severity-threshold=high
 
-      # NOTA: El paso de push a DockerHub de la guía se omite a propósito.
-      # El despliegue de imágenes de este repositorio lo realiza
-      # .github/workflows/deploy.yml hacia AWS ECR/EC2.
+      # 9. Construir imagen Docker
+      - name: Build de imagen Docker
+        run: |
+          docker build -t proyecto-efa-backend:latest .
+
+      # 10. Escanear imagen Docker
+      - name: Escaneo Snyk de imagen Docker
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk container test proyecto-efa-backend:latest \
+            --file=Dockerfile \
+            --severity-threshold=high
+
+      # 11. Verificar imagen generada
+      - name: Verificar imagen Docker
+        run: docker image inspect proyecto-efa-backend:latest
+
+      # 12. Resumen
+      - name: Resumen del pipeline
+        if: success()
+        run: |
+          echo "Pipeline CI completado correctamente"
+          echo "Pruebas JUnit y JaCoCo: OK"
+          echo "SonarCloud: OK"
+          echo "Snyk dependencias: OK"
+          echo "Snyk contenedor: OK"
+          echo "Docker Build: OK"
