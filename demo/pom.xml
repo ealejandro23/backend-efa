@@ -26,6 +26,17 @@
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     </properties>
 
+    <!-- Actualización controlada de dependencia transitiva -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>3.18.0</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
 
         <!-- Actuator -->
@@ -72,11 +83,11 @@
             <version>1.38.0</version>
         </dependency>
 
-        <!-- PostgreSQL -->
+        <!-- PostgreSQL actualizado -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.7.12</version>
+            <version>42.7.14</version>
             <scope>runtime</scope>
         </dependency>
 
