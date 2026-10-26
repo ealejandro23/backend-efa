@@ -176,7 +176,44 @@ jobs:
         if: ${{ vars.DEMO_MODE != 'true' }}
         run: docker image prune -af --filter "until=48h"
 
-      - name: Simular deploy (demo mode)
+      - name: Descargar imagen Docker para entorno simulado
         if: ${{ vars.DEMO_MODE == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Desplegar con Docker Compose en entorno simulado
+        if: ${{ vars.DEMO_MODE == 'true' }}
+        env:
+          IMAGE_TAG_ORIGINAL: ${{ needs.build.outputs.image-tag }}
         run: |
-          echo "DEMO_MODE activo: se omite el despliegue real"
+          set -euo pipefail
+
+          docker load -i image.tar
+          docker tag "${ECR_REPOSITORY}:${IMAGE_TAG_ORIGINAL}" efa-local/backend:latest
+
+          export ECR_REGISTRY=efa-local
+          export ECR_REPOSITORY=backend
+          export IMAGE_TAG=latest
+          POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          export POSTGRES_PASSWORD
+          export POSTGRES_PORT=5433
+          export BACKEND_PORT=8083
+
+          docker compose -p efa-ci-demo config --quiet
+          docker compose -p efa-ci-demo up -d --no-build --pull never --wait --wait-timeout 180
+
+          docker compose -p efa-ci-demo ps
+
+          curl --fail --silent --show-error \
+            http://localhost:8083/actuator/health \
+            -o health.json
+
+          cat health.json
+          grep -q '"status":"UP"' health.json
+
+          echo "Despliegue Compose validado correctamente"
+
+      - name: Mostrar estado de Compose
+        if: ${{ always() && vars.DEMO_MODE == 'true' }}
+        run: docker compose -p efa-ci-demo ps
