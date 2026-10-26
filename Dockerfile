@@ -9,7 +9,7 @@ COPY demo/src ./src
 RUN mvn -B -ntp clean package -DskipTests
 
 # Etapa 2: Ejecucion con Java 21 y Alpine
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 
 WORKDIR /app
 
