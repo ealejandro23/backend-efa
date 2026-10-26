@@ -1,6 +1,6 @@
 # Proyecto EFA — Backend
 
-API REST desarrollada con **Java 21 y Spring Boot 4.0.8** para una tienda de ropa online. Permite gestionar productos, ventas, usuarios, categorías, colores, tallas, materiales, marcas, métodos de pago, métodos de envío e imágenes mediante Cloudinary.
+API REST desarrollada con **Java 21 y Spring Boot 4.0.9** para una tienda de ropa online. Permite gestionar productos, ventas, usuarios, categorías, colores, tallas, materiales, marcas, métodos de pago, métodos de envío e imágenes mediante Cloudinary.
 
 Este repositorio también incorpora herramientas y prácticas DevOps para automatizar la compilación, las pruebas, el análisis de calidad, la seguridad y la construcción de imágenes Docker.
 
@@ -9,7 +9,7 @@ Este repositorio también incorpora herramientas y prácticas DevOps para automa
 | Tecnología | Función |
 |---|---|
 | Java 21 | Lenguaje de programación |
-| Spring Boot 4.0.8 | Framework principal del backend |
+| Spring Boot 4.0.9 | Framework principal del backend |
 | Spring Data JPA / Hibernate | Persistencia de datos |
 | Spring Security | Configuración de seguridad |
 | Spring Validation | Validación de datos |
