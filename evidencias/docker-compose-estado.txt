@@ -1,0 +1,3 @@
+﻿NAME                   IMAGE                      COMMAND                  SERVICE   CREATED              STATUS                        PORTS
+proyecto-efa-backend   efa-local/backend:latest   "sh -c 'java -jar apÔÇª"   backend   About a minute ago   Up About a minute (healthy)   127.0.0.1:8083->8080/tcp
+proyecto-efa-db        postgres:16-alpine         "docker-entrypoint.sÔÇª"   db        About a minute ago   Up About a minute (healthy)   127.0.0.1:5433->5432/tcp
