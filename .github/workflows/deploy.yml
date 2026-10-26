@@ -1,13 +1,16 @@
 name: Build, push y deploy backend (AWS EC2 + ECR)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "demo/**"
-      - "Dockerfile"
-      - ".github/workflows/deploy.yml"
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "CI — Tests, Calidad y Seguridad"
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 env:
   AWS_REGION: us-east-1
@@ -18,22 +21,40 @@ jobs:
 
   build:
     name: Build de la imagen Docker
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
     runs-on: ubuntu-latest
+
     outputs:
       image-tag: ${{ steps.meta.outputs.tag }}
+
     steps:
-      - name: Checkout código
+      - name: Checkout del commit aprobado
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
 
       - name: Definir tag de imagen
         id: meta
-        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+        env:
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "tag=${COMMIT_SHA:0:8}" >> "$GITHUB_OUTPUT"
 
       - name: Build de la imagen Docker
-        run: docker build -t ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }} .
+        run: |
+          docker build \
+            -t ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }} .
 
       - name: Guardar imagen como artifact
-        run: docker save ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }} -o image.tar
+        run: |
+          docker save \
+            ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }} \
+            -o image.tar
 
       - name: Subir artifact
         uses: actions/upload-artifact@v4
@@ -46,6 +67,7 @@ jobs:
     name: Push a ECR
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Descargar artifact
         uses: actions/download-artifact@v4
@@ -75,23 +97,32 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
         run: |
-          docker tag ${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker tag ${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
-          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker tag \
+            "${ECR_REPOSITORY}:${IMAGE_TAG}" \
+            "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          docker tag \
+            "${ECR_REPOSITORY}:${IMAGE_TAG}" \
+            "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
 
       - name: Simular push (demo mode)
         if: ${{ vars.DEMO_MODE == 'true' }}
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
         run: |
           echo "DEMO_MODE activo: se omite push real a ECR"
-          echo "Imagen que se hubiera pusheado: ${{ env.ECR_REPOSITORY }}:${{ needs.build.outputs.image-tag }}"
+          echo "Imagen simulada: $ECR_REPOSITORY:$IMAGE_TAG"
 
   deploy:
     name: Deploy en EC2
     needs: [build, push]
     runs-on: ubuntu-latest
+
     steps:
-      - name: Configurar credenciales AWS (para el pull de ECR)
+      - name: Configurar credenciales AWS
         if: ${{ vars.DEMO_MODE != 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -105,38 +136,47 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Checkout código (para el docker-compose.yml)
+      - name: Checkout del commit aprobado
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
 
-      - name: Generar .env para docker compose
+      - name: Generar entorno para Docker Compose
         if: ${{ vars.DEMO_MODE != 'true' }}
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
         run: |
-          cat > .env <<EOF
-          ECR_REGISTRY=$ECR_REGISTRY
-          ECR_REPOSITORY=$ECR_REPOSITORY
-          IMAGE_TAG=$IMAGE_TAG
-          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          CLOUDINARY_URL=${{ secrets.CLOUDINARY_URL }}
-          EOF
+          {
+            echo "ECR_REGISTRY=$ECR_REGISTRY"
+            echo "ECR_REPOSITORY=$ECR_REPOSITORY"
+            echo "IMAGE_TAG=$IMAGE_TAG"
+            echo "POSTGRES_DB=$POSTGRES_DB"
+            echo "POSTGRES_USER=$POSTGRES_USER"
+            echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
+            echo "CLOUDINARY_URL=$CLOUDINARY_URL"
+          } > .env
+
+          chmod 600 .env
 
       - name: Pull de la nueva imagen
         if: ${{ vars.DEMO_MODE != 'true' }}
         run: docker compose --env-file .env pull backend
 
-      - name: Levantar backend + base de datos
+      - name: Levantar backend y base de datos
         if: ${{ vars.DEMO_MODE != 'true' }}
         run: docker compose --env-file .env up -d
 
-      - name: Limpiar imágenes viejas
+      - name: Limpiar imagenes viejas
         if: ${{ vars.DEMO_MODE != 'true' }}
         run: docker image prune -af --filter "until=48h"
 
       - name: Simular deploy (demo mode)
         if: ${{ vars.DEMO_MODE == 'true' }}
         run: |
-          echo "DEMO_MODE activo: se omite deploy real en EC2"
+          echo "DEMO_MODE activo: se omite el despliegue real"
