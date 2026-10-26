@@ -201,6 +201,7 @@ jobs:
           export BACKEND_PORT=8083
 
           docker compose -p efa-ci-demo config --quiet
+          docker compose -p efa-ci-demo pull db
           docker compose -p efa-ci-demo up -d --no-build --pull never --wait --wait-timeout 180
 
           docker compose -p efa-ci-demo ps
