@@ -8,28 +8,34 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Compilar y probar
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout código
+      - name: Checkout del codigo
         uses: actions/checkout@v4
 
-      - name: Configurar JDK 17
-        uses: actions/setup-java@v4
+      - name: Configurar Java 21
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: demo/pom.xml
 
       - name: Compilar el proyecto
         working-directory: demo
         run: mvn -B -ntp compile
 
-      - name: Ejecutar pruebas
+      - name: Ejecutar pruebas JUnit
         working-directory: demo
         run: mvn -B -ntp test
 
-      - name: Empaquetar (skip tests, ya ejecutadas)
+      - name: Empaquetar aplicacion
         working-directory: demo
         run: mvn -B -ntp package -DskipTests
