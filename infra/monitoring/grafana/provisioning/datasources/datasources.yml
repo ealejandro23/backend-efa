@@ -1,0 +1,69 @@
+# =============================================================================
+# Grafana - aprovisionamiento de datasources
+#
+# El provisionamiento automatico garantiza que cualquier instancia del stack
+# de observabilidad tenga exactamente las mismas fuentes de datos. Sin esto,
+# los dashboards serian dependientes de configuracion manual y no podrian
+# recrearse de forma automatizada en el pipeline.
+# =============================================================================
+
+apiVersion: 1
+
+datasources:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus: metricicas de uso, errores y disponibilidad.
+  # ---------------------------------------------------------------------------
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: 2.54.0
+      incrementalQuerying: true
+      incrementalQueryOverlapWindow: 10m
+      cacheLevel: 'High'
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+    version: 1
+
+  # ---------------------------------------------------------------------------
+  # Loki: logs de los microservicios.
+  # ---------------------------------------------------------------------------
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"traceId":"(\w+)"'
+          url: '$${__value.raw}'
+          datasourceUid: tempo
+    version: 1
+
+  # ---------------------------------------------------------------------------
+  # Pushgateway: metricas del pipeline CI/CD (duracion de despliegue,
+  # cobertura de pruebas, estado del build).
+  # ---------------------------------------------------------------------------
+  - name: Pushgateway
+    uid: pushgateway
+    type: prometheus
+    access: proxy
+    url: http://pushgateway:9091
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+    version: 1

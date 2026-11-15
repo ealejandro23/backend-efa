@@ -1,0 +1,75 @@
+# =============================================================================
+# Loki - agregacion de logs del Proyecto EFA
+#
+# Loki indexa los logs que Grafana Alloy recolecta desde los contenedores
+# (entorno Docker Compose) y desde los pods (entorno Kubernetes). Los logs
+# se emiten en JSON desde la aplicacion (logback-spring.xml) para que los
+# campos indexados (nivel, servicio, traza, version) puedan consultarse con
+# filtros estructurados y no solo por busqueda de texto.
+# =============================================================================
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # El entorno academico maneja pocos GB: 30 dias de retencion es suficiente
+  # para analizar incidentes y auditar accesos a los logs.
+  retention_period: 720h
+  max_cache_freshness_per_query: 10m
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  volume_enabled: true
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  # Limita la cardinalidad de las etiquetas para no degradar el indice.
+  # Sin este limite, una etiqueta con el identificador de cada peticion
+  # (por ejemplo traceId) multiplicaria el numero de series hasta agotar
+  # la memoria del indice.
+  max_label_names_per_series: 15
+  max_label_value_length: 1024
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true
+
+analytics:
+  reporting_enabled: false

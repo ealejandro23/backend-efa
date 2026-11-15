@@ -1,0 +1,71 @@
+// =============================================================================
+// Grafana Alloy - recolector de logs (entorno Kubernetes)
+//
+// Se despliega como DaemonSet. Cada instancia lee los logs de los pods del
+// namespace configurado usando la API de Kubernetes, y los etiqueta con los
+// metadatos reales del pod (namespace, deployment, app, version) para que las
+// consultas en Loki sean correlacionables con las metricas de Prometheus.
+//
+// NOTA: la sintaxis de Alloy usa comentarios con "//" (no "#").
+// =============================================================================
+
+discovery.kubernetes "pods" {
+	role = "pod"
+}
+
+discovery.relabel "pods" {
+	targets = discovery.kubernetes.pods.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		regex         = "efa"
+		action        = "keep"
+	}
+}
+
+discovery.relabel "pods_annotations" {
+	targets = discovery.relabel.pods.output
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+		regex         = "true"
+		action        = "keep"
+	}
+}
+
+loki.source.kubernetes "pods" {
+	targets    = discovery.relabel.pods_annotations.output
+	forward_to = [loki.process.decorate.receiver]
+}
+
+loki.process "decorate" {
+	forward_to = [loki.write.loki.receiver]
+
+	stage.kubernetes {
+		source = "log"
+	}
+
+	stage.label "project" {
+		value = "efa"
+	}
+
+	stage.static_labels {
+		values = {
+			environment = "prod",
+		}
+	}
+
+	stage.labels {
+		values = {
+			app     = "app_kubernetes_io_name",
+			version = "app_kubernetes_io_version",
+			pod     = "pod",
+		}
+	}
+}
+
+loki.write "loki" {
+	endpoint {
+		url = "http://loki.efa.svc.cluster.local:3100/loki/api/v1/push"
+	}
+}

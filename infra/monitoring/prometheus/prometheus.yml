@@ -1,0 +1,175 @@
+# =============================================================================
+# Prometheus - Proyecto EFA
+# Configuracion de scrapeo para microservicios en Kubernetes y en Docker
+# Compose (entorno de desarrollo simulado).
+#
+# Este archivo es la fuente unica de verdad de que metricas se recolectan,
+# con que etiquetas y cada cuanto se consulta. Cambiarlo afecta la disponibilidad
+# de las alertas y de los dashboards, por lo que cualquier modificacion debe
+# pasar por el gate de cumplimiento (scripts/compliance/audit-prometheus.sh).
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "${CLUSTER_NAME:-efa-cluster}"
+    environment: "${ENVIRONMENT:-dev}"
+    project: "efa"
+
+# Reglas de alerta evaluadas continuamente por Prometheus.
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus se auto-monitorea (metrica de salud del propio stack).
+  # ---------------------------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          component: monitoring
+
+  # ---------------------------------------------------------------------------
+  # Pushgateway: recibe las metricas del pipeline CI/CD (duracion de
+  # despliegue, cobertura de pruebas, resultado del build). Son metricas
+  # "push" porque nacen y mueren dentro de una ejecucion del workflow y no
+  # existe un endpoint activo al que el exporter pueda scrapear.
+  # ---------------------------------------------------------------------------
+  - job_name: pushgateway
+    static_configs:
+      - targets: ["pushgateway:9091"]
+        labels:
+          component: monitoring
+
+  # ---------------------------------------------------------------------------
+  # Backend Spring Boot desplegado en Docker Compose (entorno simulado).
+  # El microservicio expone el endpoint /actuator/prometheus.
+  # ---------------------------------------------------------------------------
+  - job_name: efa-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:8080"]
+        labels:
+          service: efa-backend
+          environment: "${ENVIRONMENT:-dev}"
+          component: application
+
+  # ---------------------------------------------------------------------------
+  # Backend Spring Boot desplegado en Kubernetes.
+  # Descubre automaticamente los pods anotados con prometheus.io/scrape.
+  # ---------------------------------------------------------------------------
+  - job_name: efa-backend-k8s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ["efa"]
+    relabel_configs:
+      # Solo se scrapea lo que se solicito explicitamente.
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      # Ruta de metrics customizable (por defecto /actuator/prometheus).
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      # Puerto real del contenedor definido en la anotacion.
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement: "$1:$2"
+        target_label: __address__
+      # Etiquetas de negocio usadas por los dashboards y las alertas.
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        action: replace
+        target_label: container
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+        action: replace
+        target_label: version
+
+  # ---------------------------------------------------------------------------
+  # Frontend (nginx) desplegado en Kubernetes con el exporter de nginx.
+  # ---------------------------------------------------------------------------
+  - job_name: efa-frontend-k8s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ["efa"]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement: "$1:$2"
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+
+  # ---------------------------------------------------------------------------
+  # cAdvisor: metricas de CPU, memoria y red de los contenedores.
+  # Es la fuente de las series de uso de recursos de los dashboards.
+  # En el entorno local corre en un contenedor dedicado; en Kubernetes el
+  # scraping lo realiza el cAdvisor que ya viene en el nodo.
+  # ---------------------------------------------------------------------------
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          component: monitoring
+    metric_relabel_configs:
+      # Se conservan solo los contenedores etiquetados como parte del
+      # proyecto (--store_container_labels=true en cAdvisor). Asi el indice
+      # no se infla con datos de otros proyectos del host.
+      - source_labels: [container_label_project]
+        regex: "efa"
+        action: "keep"
+
+  - job_name: cadvisor-k8s
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - action: labelmap
+        regex: "__meta_kubernetes_node_label_(.+)"
+      - target_label: node
+        replacement: "${KUBE_NODE:-kind-control-plane}"
+
+  # ---------------------------------------------------------------------------
+  # kube-state-metrics: estado real de los objetos de Kubernetes.
+  # Permite detectar despliegues incompletos, pods no listos o sin HPA.
+  # ---------------------------------------------------------------------------
+  - job_name: kube-state-metrics
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: "kube-state-metrics"
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: "http"

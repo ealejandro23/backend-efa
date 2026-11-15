@@ -1,0 +1,79 @@
+// =============================================================================
+// Grafana Alloy - recolector de logs (entorno Docker Compose)
+//
+// Alloy cumple el rol que antes ocupaba Promtail: descubre los logs de los
+// contenedores, los etiqueta con metadatos utiles (servicio, namespace,
+// contenedor, imagen) y los reenvia a Loki.
+//
+// Se ejecuta como un contenedor con acceso de solo lectura al socket de Docker.
+//
+// NOTA: la sintaxis de Alloy usa comentarios con "//" (no "#"), por lo que
+// este archivo no es YAML.
+// =============================================================================
+
+// Descubrimiento de contenedores Docker.
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+// Filtro: solo se recolectan los contenedores del proyecto EFA y los del
+// propio stack de observabilidad, para no mezclar logs con otros proyectos
+// que corran en el mismo host.
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(efa|prometheus|grafana|loki|alloy|pushgateway|proyecto-efa).*"
+		action        = "keep"
+	}
+
+	// Promueve la etiqueta "service_name" declarada en el compose a una
+	// etiqueta consultable de la serie de Loki. Es lo que permite filtrar
+	// logs por microservicio (efa-backend, efa-db, efa-prometheus...).
+	rule {
+		source_labels = ["__meta_docker_container_label_service_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_project"]
+		target_label  = "project"
+	}
+}
+
+// Fuente: logs de los contenedores Docker del entorno de desarrollo simulado.
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.containers.output
+	forward_to = [loki.process.decorate.receiver]
+}
+
+// Procesamiento: agrega metadatos de Docker y normaliza las etiquetas.
+loki.process "decorate" {
+	forward_to = [loki.write.loki.receiver]
+
+	stage.docker {}
+
+	// Etiquetas constantes del proyecto y del entorno.
+	stage.static_labels {
+		values = {
+			project     = "efa",
+			environment = "dev",
+		}
+	}
+
+	// Expone el nombre del contenedor como etiqueta consultable (service).
+	stage.labels {
+		values = {
+			service = "container_name",
+		}
+	}
+}
+
+// Destino: API de ingestion de Loki.
+loki.write "loki" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

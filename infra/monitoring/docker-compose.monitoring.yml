@@ -1,0 +1,265 @@
+# =============================================================================
+# Stack de observabilidad - Proyecto EFA
+#
+# Stack completo de observabilidad para el entorno de desarrollo simulado:
+#   - Prometheus  :_metricas_ (uso, errores, disponibilidad, recursos, CI/CD)
+#   - Loki        : logs estructurados de los microservicios
+#   - Alloy       : recolector que lleva los logs de Docker a Loki
+#   - Grafana     : dashboards y visualizacion
+#   - Pushgateway : punto de entrada de las metricas del pipeline CI/CD
+#
+# Uso (con el backend ya levantado):
+#   docker compose -f docker-compose.yml \
+#                  -f infra/monitoring/docker-compose.monitoring.yml up -d
+#
+# Verificacion:
+#   curl http://localhost:9090/-/healthy     # Prometheus
+#   curl http://localhost:3000/api/health    # Grafana
+#   curl http://localhost:3100/ready         # Loki
+# =============================================================================
+
+name: efa-observability
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus: almacen de metricas y motor de reglas de alerta.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    container_name: efa-prometheus
+
+    labels:
+      service_name: efa-prometheus
+      project: efa
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+      - --web.enable-admin-api
+      - --log.level=info
+    environment:
+      CLUSTER_NAME: ${CLUSTER_NAME:-efa-local}
+      ENVIRONMENT: ${ENVIRONMENT:-dev}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - efa-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 512m
+
+  # ---------------------------------------------------------------------------
+  # Pushgateway: recibe las metricas que genera el pipeline CI/CD.
+  # No existe un endpoint activo al que se pueda scrapear, por eso el modelo
+  # push es el correcto para metricas de jobs que se ejecutan y terminan.
+  # ---------------------------------------------------------------------------
+  pushgateway:
+    image: prom/pushgateway:v1.11.5
+    container_name: efa-pushgateway
+
+    labels:
+      service_name: efa-pushgateway
+      project: efa
+    restart: unless-stopped
+    command:
+      - --web.enable-lifecycle
+    volumes:
+      - pushgateway-data:/data
+    ports:
+      - "127.0.0.1:9091:9091"
+    networks:
+      - efa-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9091/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+
+  # ---------------------------------------------------------------------------
+  # cAdvisor: metricas de CPU, memoria, red y disco de los contenedores.
+  # Es la fuente de las series de uso de recursos en el entorno de desarrollo
+  # simulado (en Kubernetes el scraping lo hace el propio cAdvisor del nodo).
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    container_name: efa-cadvisor
+    restart: unless-stopped
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --store_container_labels=true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8088:8080"
+    networks:
+      - efa-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/healthz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 512m
+
+  # ---------------------------------------------------------------------------
+  # Loki: almacen de logs indexados por etiquetas.
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.7.9
+    container_name: efa-loki
+
+    labels:
+      service_name: efa-loki
+      project: efa
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - efa-net
+    mem_limit: 512m
+
+  # ---------------------------------------------------------------------------
+  # Loki readiness gate.
+  #
+  # La imagen oficial de Loki es "distroless": no incluye shell ni cliente
+  # HTTP, por lo que no puede ejecutar un healthcheck propio. Este contenedor
+  # auxiliar comprueba /ready desde la red y termina con codigo 0 cuando Loki
+  # responde. Grafana espera a que este gate termine correctamente.
+  # ---------------------------------------------------------------------------
+  loki-ready:
+    image: curlimages/curl:8.11.1
+    container_name: efa-loki-ready
+
+    labels:
+      service_name: efa-loki-ready
+      project: efa
+
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - >-
+        until curl --fail --silent --show-error http://loki:3100/ready; do
+        echo "Loki aun no responde /ready, reintentando...";
+        sleep 3;
+        done;
+        echo "Loki listo para recibir logs"
+    depends_on:
+      - loki
+    networks:
+      - efa-net
+
+  # ---------------------------------------------------------------------------
+  # Alloy: recolector de logs desde los contenedores Docker.
+  # Requiere acceso de solo lectura al socket de Docker.
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.21.3
+    container_name: efa-alloy
+
+    labels:
+      service_name: efa-alloy
+      project: efa
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./alloy/alloy-config.docker.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:12345:12345"
+    networks:
+      - efa-net
+    # La imagen de Alloy incluye bash pero no curl ni wget, por lo que el
+    # healthcheck usa las redirecciones TCP propias de bash.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/12345 &&
+          printf 'GET /-/ready HTTP/1.0\r\n\r\n' >&3 &&
+          head -1 <&3 | grep -q '200'
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------------------
+  # Grafana: dashboards, visualizacion y alertas basadas en reglas Prometheus.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:12.4.15
+    container_name: efa-grafana
+
+    labels:
+      service_name: efa-grafana
+      project: efa
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-efa-observability}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_INSTALL_PLUGINS: ""
+      GF_FEATURE_TOGGLES_ENABLE: "alertingFederation"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki-ready:
+        condition: service_completed_successfully
+    networks:
+      - efa-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    mem_limit: 512m
+
+networks:
+  efa-net:
+    name: efa-net
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  pushgateway-data:
+  loki-data:
+  alloy-data:
+  grafana-data:

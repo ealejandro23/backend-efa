@@ -1,0 +1,303 @@
+{
+  "uid": "efa-errors-logs",
+  "title": "EFA - Errores, Logs y Alertas",
+  "description": "Vista de diagnostico: errores del microservicio, logs estructurados consultados en Loki y estado de las reglas de alerta. Es el tablero que se usa durante la investigacion de un incidente.",
+  "tags": ["efa", "errores", "logs", "loki", "alertas"],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Errores del servidor (5xx) por endpoint",
+      "description": "Tasa de errores 5xx agrupada por recurso. Un endpoint con errores sostenidos y el resto en cero apunta a un problema localizado y no general.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (uri) (rate(http_server_requests_seconds_count{job=~\"efa-backend.*\", status=~\"5..\"}[5m])) * 60",
+          "legendFormat": "{{uri}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rpm",
+          "min": 0,
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Errores de aplicacion registrados (efa_errors_total)",
+      "description": "Detalle de los errores contabilizados por la aplicacion, clasificados por tipo y endpoint. Es la fuente para decidir donde invertir en pruebas.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tipo, endpoint) (efa_errors_total)",
+          "legendFormat": "{{tipo}} / {{endpoint}}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "renameByName": {
+              "Value": "errores",
+              "endpoint": "endpoint",
+              "tipo": "tipo"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "Logs del backend (Loki)",
+      "description": "Logs estructurados del microserviciobackend, con el identificador de correlacion (traceId) que permite unir el error reportado por el usuario con la linea exacta del log.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 16, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"efa-backend\"} | json",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Alertas criticas activas",
+      "description": "Numero de reglas de alerta en estado 'firing' con severidad critica. Un valor mayor que 0 bloquea el despliegue segun la politica P-OBS-003.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(ALERTS{alertstate=\"firing\", severity=\"critical\"}) or vector(0)",
+          "legendFormat": "alertas"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "state-timeline",
+      "title": "Estado de las alertas del microservicio",
+      "description": "Estado de cada regla de alerta en el tiempo. Permite reconstruir la cronologia de un incidente: que.alertado primero y cual fue la consecuencia.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ALERTS{alertstate=\"firing\"}",
+          "legendFormat": "{{alertname}}"
+        }
+      ],
+      "options": {
+        "showValue": "auto",
+        "alignValue": "left",
+        "rowHeight": 0.9,
+        "perPage": 20,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Logs del frontend (nginx)",
+      "description": "Access log estructurado del frontend. Permite correlacionar el error que ve el usuario con la peticion concreta registrada por nginx.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 16, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"efa-frontend\"}",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Disponibilidad por instancia",
+      "description": "Estado de disponibilidad de cada replica del microservicio. Si una instancia cae, el balanceador deja de enviarle trafico y el servicio mantiene su disponibilidad.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 18 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "efa_availability_up",
+          "legendFormat": "{{service_instance}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "mappings": [
+            {
+              "options": {
+                "0": { "text": "CAIDO", "color": "red", "index": 0 },
+                "1": { "text": "DISPONIBLE", "color": "green", "index": 1 }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

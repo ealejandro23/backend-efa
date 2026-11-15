@@ -1,0 +1,23 @@
+# =============================================================================
+# Grafana - aprovisionamiento de dashboards
+#
+# Carga automatica de todos los dashboards definidos en /etc/grafana/dashboards.
+# Los dashboards son archivos JSON versionados en el repositorio: eso permite
+# revisar los cambios mediante Pull Request y reconstruir el stack completo
+# sin intervencion manual.
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: 'EFA'
+    orgId: 1
+    folder: 'Proyecto EFA'
+    folderUid: efa
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

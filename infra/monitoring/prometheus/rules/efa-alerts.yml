@@ -1,0 +1,189 @@
+# =============================================================================
+# Reglas de alerta - Proyecto EFA
+#
+# Cada regla expresa un criterio de operacion que el pipeline y el equipo
+# usan para decidir. Las alertas criticas (severity: critical) estan
+# vinculadas a la politica de cumplimiento P-OBS-003: cuando una alerta
+# critica permanece activa, el pipeline de despliegue queda bloqueado.
+# =============================================================================
+
+groups:
+
+  # ---------------------------------------------------------------------------
+  # Disponibilidad (SLO 99% sobre ventana de 5 minutos, rolling)
+  # ---------------------------------------------------------------------------
+  - name: efa-disponibilidad
+    interval: 30s
+    rules:
+      - alert: EfaBackendCaido
+        expr: up{job="efa-backend"} == 0 or up{job="efa-backend-k8s"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: efa-backend
+          cumplimiento: "P-OBS-003"
+        annotations:
+          summary: "El backend EFA no responde al scrape de Prometheus"
+          description: >-
+            Prometheus no logra obtener metricas del backend desde hace mas de
+            2 minutos. El servicio no esta disponible o el pipeline de
+            despliegue esta bloqueado por esta condicion.
+          runbook: "docs/RUNBOOK.md#efa-backend-caido"
+
+      - alert: EfaDisponibilidadBajoSLO
+        expr: |
+          (
+            1 - (
+              sum(rate(http_server_requests_seconds_count{job=~"efa-backend.*",status!~"5.."}[5m]))
+              /
+              sum(rate(http_server_requests_seconds_count{job=~"efa-backend.*"}[5m]))
+            )
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: efa-backend
+        annotations:
+          summary: "Disponibilidad del backend por debajo del SLO de 99%"
+          description: "La tasa de error 5xx supera el 1% durante 5 minutos seguidos."
+
+  # ---------------------------------------------------------------------------
+  # Errores de aplicacion
+  # ---------------------------------------------------------------------------
+  - name: efa-errores
+    interval: 30s
+    rules:
+      - alert: EfaTasaErrores5xxAlta
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job=~"efa-backend.*",status=~"5.."}[5m])) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+          service: efa-backend
+          cumplimiento: "P-OBS-004"
+        annotations:
+          summary: "Tasa de errores 5xx sostenida en el backend"
+          description: >-
+            Se detectan mas de 0.1 errores 5xx por segundo durante 3 minutos.
+            El pipeline de despliegue permanece bloqueado hasta verificar la causa.
+          runbook: "docs/RUNBOOK.md#tasa-de-errores-5xx-alta"
+
+      - alert: EfaErroresPersonalizadosDetectados
+        expr: increase(efa_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: efa-backend
+        annotations:
+          summary: "Errores de negocio registrados por la aplicacion"
+          description: "El contador efa_errors_total aumento: existen errores no-HTTP mapeados en los logs."
+
+  # ---------------------------------------------------------------------------
+  # Latencia
+  # ---------------------------------------------------------------------------
+  - name: efa-latencia
+    interval: 30s
+    rules:
+      - alert: EfaLatenciaP95Alta
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{job=~"efa-backend.*"}[5m]))
+          ) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          service: efa-backend
+        annotations:
+          summary: "Latencia p95 del backend superior a 1.5 s"
+          description: "El percentil 95 de las peticiones HTTP excede el umbral acordado de 1.5 segundos."
+
+  # ---------------------------------------------------------------------------
+  # Uso de recursos (CPU y memoria)
+  # ---------------------------------------------------------------------------
+  - name: efa-recursos
+    interval: 30s
+    rules:
+      - alert: EfaCpuSaturada
+        expr: |
+          (
+            sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="efa",container!=""}[5m]))
+            /
+            sum by (pod) (kube_pod_container_resource_limits{namespace="efa",resource="cpu"})
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          service: efa-backend
+        annotations:
+          summary: "Consumo de CPU superior al 85% del limite"
+          description: "El contenedor {{ $labels.pod }} usa mas del 85% del limite de CPU configurado."
+          runbook: "docs/RUNBOOK.md#consumo-de-cpu-elevado"
+
+      - alert: EfaMemoriaSaturada
+        expr: |
+          (
+            sum by (pod) (container_memory_working_set_bytes{namespace="efa",container!=""})
+            /
+            sum by (pod) (kube_pod_container_resource_limits{namespace="efa",resource="memory"})
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          service: efa-backend
+        annotations:
+          summary: "Consumo de memoria superior al 85% del limite"
+          description: "El contenedor {{ $labels.pod }} usa mas del 85% del limite de memoria configurado."
+
+      - alert: EfaMemoriaEnRiesgoDeOOM
+        expr: |
+          (
+            sum by (pod) (container_memory_working_set_bytes{namespace="efa",container!=""})
+            /
+            sum by (pod) (kube_pod_container_resource_limits{namespace="efa",resource="memory"})
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          service: efa-backend
+          cumplimiento: "P-OBS-005"
+        annotations:
+          summary: "Memoria al 95%: riesgo imminent de OOMKill"
+          description: "Aumentar el limite de memoria o corregir una fuga antes del siguiente despliegue."
+
+  # ---------------------------------------------------------------------------
+  # Salud del despliegue y pipeline
+  # ---------------------------------------------------------------------------
+  - name: efa-pipeline
+    interval: 30s
+    rules:
+      - alert: EfaDespliegueFallido
+        expr: efa_ci_deployment_status{status="failed"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          service: ci-cd
+          cumplimiento: "P-CI-002"
+        annotations:
+          summary: "El ultimo despliegue del pipeline falló"
+          description: "El workflow de despliegue reporto estado fallido. El entorno productivo no fue actualizado."
+
+      - alert: EfaCoberturaBajoUmbral
+        expr: efa_ci_test_coverage_ratio < 0.60
+        for: 1m
+        labels:
+          severity: warning
+          service: ci-cd
+          cumplimiento: "P-QA-002"
+        annotations:
+          summary: "Cobertura de pruebas por debajo del umbral de calidad"
+          description: "La cobertura es {{ $value | humanizePercentage }}, inferior al 60% exigido por la politica P-QA-002."
+
+      - alert: EfaTiempoDespliegueExcesivo
+        expr: efa_ci_deployment_duration_seconds > 600
+        for: 1m
+        labels:
+          severity: warning
+          service: ci-cd
+        annotations:
+          summary: "El despliegue supero los 10 minutos"
+          description: "La duracion del despliegue fue {{ $value }}s. Revisar tiempos de build y descarga de imagenes."
