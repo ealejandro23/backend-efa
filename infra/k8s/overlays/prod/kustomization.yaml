@@ -14,7 +14,7 @@ resources:
   - ../../base
 
 patches:
-  # --- Backend: 3 replicas y limites mas estrictos -------------------------
+  # --- Backend: 2 replicas y limites mas estrictos -------------------------
   - target:
       kind: Deployment
       name: efa-backend
@@ -25,7 +25,7 @@ patches:
         name: efa-backend
         namespace: efa
       spec:
-        replicas: 3
+        replicas: 2
         template:
           spec:
             containers:

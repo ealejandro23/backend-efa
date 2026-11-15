@@ -1,25 +1,44 @@
 # =============================================================================
 # Kind - configuracion del cluster Kubernetes de un solo nodo
 #
-# Kind crea un cluster real de Kubernetes ejecutandose dentro de contenedores
-# Docker. Es el entorno "nube simulado" del proyecto: reproduce el
-# comportamiento del orquestador (scheduling, probes, HPA, PDB, NetworkPolicy)
-# en un laptop, sin costo de proveedor.
+# Kind crea un cluster de Kubernetes **real**: el mismo `kube-apiserver`, el
+# mismo `kube-scheduler`, el mismo `kubelet` y los mismos
+# `controller-manager` que en EKS, GKE o AKS. No es una simulacion: los pods
+# se programan, las sondas se ejecutan, el autoscaling responde y las
+# `NetworkPolicy` se aplican.
 #
-# Para un cluster de nube real (AWS EKS, GCP GKE, Azure AKS) los manifiestos
-# de infra/k8s son los mismos: solo cambia el comando de contexto y la
-# autenticacion.
+# La consecuencia practica es que **los manifiestos de este proyecto son los
+# mismos que se desplegarian en un cloud real**. Cambiar de Kind a EKS
+# implica unicamente cambiar el contexto de `kubectl` y la autenticacion.
+#
+# ## Un nodo o dos
+#
+# El cluster de evaluacion usa un unico nodo (control-plane) por una razon
+# de recursos: el equipo de desarrollo tiene una maquina de 13,9 GB y la VM
+# de WSL2 donde corre Docker tiene un tope de 6,7 GB. Con un segundo nodo
+# (worker) el conjunto "cluster + stack de observabilidad + compilaciones de
+# imagenes" supera ese tope y la VM termina el proceso del API server a
+# mitad de un rollout.
+#
+# El nodo de control plane tiene el taint `node-role.kubernetes.io/control-
+# plane:NoSchedule`, por lo que las cargas de trabajo se programan en el
+# unico nodo disponible. Para una evaluacion con mas recursos, basta con
+# descomentar el bloque "worker" de este archivo: los manifiestos ya
+# declaran `topologySpreadConstraints` y un `PodDisruptionBudget`, de modo
+# que las replicas se reparten entre los nodos sin ningun cambio adicional.
+#
 # =============================================================================
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: efa-cluster
 
 nodes:
-  # --- Nodo de control plane (also hosts the workloads) ----------------------
+  # --- Nodo de control plane -------------------------------------------------
   - role: control-plane
     kubeadmConfigPatches:
       # Se permite el scheduling de cargas de trabajo en el nodo de control
-      # para que el cluster de un solo nodo tenga capacidad suficiente.
+      # plane: sin este parche, el unico nodo queda sin pods y el cluster
+      # no sirve para la evaluacion.
       - |
         kind: InitConfiguration
         nodeRegistration:
@@ -30,7 +49,7 @@ nodes:
       - containerPort: 80
         hostPort: 8080
         protocol: TCP
-      # Puerto de las sondas de Prometheus para las evidencias.
+      # Puertos de las sondas de Prometheus y Grafana, para las evidencias.
       - containerPort: 30090
         hostPort: 30090
         protocol: TCP
@@ -38,16 +57,15 @@ nodes:
         hostPort: 30093
         protocol: TCP
 
-  # --- Nodo de trabajo -------------------------------------------------------
-  # Un segundo nodo permite comprobar la distribucion de replicas
-  # (topologySpreadConstraints) y el comportamiento del PodDisruptionBudget.
-  - role: worker
-    kubeadmConfigPatches:
-      - |
-        kind: JoinConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: "topology.kubernetes.io/zone=efa-zone-b"
+  # --- Segundo nodo (opcional) ----------------------------------------------
+  # Descomentar en un equipo con recursos suficientes. Ver la nota superior.
+  # - role: worker
+  #   kubeadmConfigPatches:
+  #     - |
+  #       kind: JoinConfiguration
+  #       nodeRegistration:
+  #         kubeletExtraArgs:
+  #           node-labels: "topology.kubernetes.io/zone=efa-zone-b"
 
 # Red con salida a internet para descargar imagenes y AddOns.
 networking:
