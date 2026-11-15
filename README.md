@@ -30,17 +30,104 @@ Este repositorio incorpora prácticas y herramientas DevOps para automatizar la 
 | GitHub Actions | Automatización CI/CD |
 | AWS ECR / EC2 | Integración prevista para producción |
 
+### Stack de observabilidad y cumplimiento (Evaluación Parcial 3)
+
+| Tecnología | Función |
+|---|---|
+| Spring Boot Actuator + Micrometer | Exposición de métricas del servicio y de la aplicación |
+| Prometheus | Almacenamiento de métricas, descubrimiento de pods y reglas de alerta |
+| Grafana | Dashboards de operación y de pipeline (aprovisionados) |
+| Loki + Grafana Alloy | Agregación e indexación de logs estructurados |
+| Pushgateway | Métricas del pipeline CI/CD (despliegue, cobertura, políticas) |
+| cAdvisor | Métricas de CPU, memoria y red de los contenedores |
+| Kubernetes (Kind) | Despliegue orquestado con sondas, HPA, PDB y NetworkPolicy |
+| Kustomize | Parametrización declarativa de los manifiestos |
+| Trivy | Análisis de vulnerabilidades en dependencias e imagen |
+| Políticas propias de auditoría | Gate de cumplimiento con 20 políticas verificables |
+
+---
+
+## 0. Mapa de la entrega
+
+```text
+Desarrollo  ──▶  CI (pruebas, cobertura, calidad, seguridad)  ──▶  Gate de cumplimiento
+                                                                        │
+                                                        (verificación obligatoria de la rama)
+                                                                        │
+                                                                        ▼
+   Observabilidad  ◀──  Kubernetes + Prometheus + Grafana + Loki  ◀──  CD (gate + build + despliegue)
+        │
+        └──▶ decisiones: qué arreglar, cuándo desplegar, cuándo detener
+```
+
+| Documento | Contenido |
+|---|---|
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Stack de observabilidad, instrumentación, dashboards, alertas y decisiones que habilitan. |
+| [`docs/DEPLOYMENT-K8S.md`](docs/DEPLOYMENT-K8S.md) | Despliegue en Kubernetes e integración de la observabilidad. |
+| [`docs/COMPLIANCE.md`](docs/COMPLIANCE.md) | Políticas de cumplimiento, branch protection y auditoría automatizada. |
+| [`docs/CI-CD-INTEGRATION.md`](docs/CI-CD-INTEGRATION.md) | Cómo se integra cada herramienta en el pipeline y su impacto en las decisiones. |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Procedimientos de operación e incidentes. |
+| [`docs/DECISION-RECORDS.md`](docs/DECISION-RECORDS.md) | Registro de decisiones técnicas (ADR). |
+| [`docs/EVIDENCIAS.md`](docs/EVIDENCIAS.md) | Evidencia de la evaluación, indicador por indicador. |
+| [`docs/USO-DE-IA.md`](docs/USO-DE-IA.md) | Declaración del uso de inteligencia artificial. |
+| [`compliance/README.md`](compliance/README.md) | Guía rápida del gate de cumplimiento. |
+
+### Puesta en marcha rápida del stack completo
+
+```bash
+# 1. Microservicio instrumentado
+docker build -t efa-local/backend:latest .
+export ECR_REGISTRY=efa-local ECR_REPOSITORY=backend IMAGE_TAG=latest
+export POSTGRES_PASSWORD=efa-evaluacion-2025
+docker compose -p efa up -d
+
+# 2. Stack de observabilidad (Prometheus, Grafana, Loki, Alloy, Pushgateway, cAdvisor)
+docker compose -f infra/monitoring/docker-compose.monitoring.yml up -d
+
+# 3. Verificar
+curl -s http://localhost:8083/actuator/health
+curl -s http://localhost:8083/actuator/prometheus | grep '^efa_'
+curl -s -u admin:efa-observability "http://localhost:3000/api/search?type=dash-db"
+
+# 4. Cluster Kubernetes con observabilidad integrada
+FRONTEND_DIR=../Frontend bash scripts/k8s/deploy-kind.sh
+
+# 5. Gate de cumplimiento
+bash scripts/compliance/run-all.sh --continuar
+```
+
+| Servicio | Puerto |
+|---|---|
+| API del backend | 8083 |
+| PostgreSQL | 5433 |
+| Prometheus | 9090 |
+| Pushgateway | 9091 |
+| Grafana (admin / efa-observability) | 3000 |
+| Loki | 3100 |
+| Grafana Alloy | 12345 |
+| cAdvisor | 8088 |
+
 ## 2. Estructura del proyecto
 
 ```text
 backend-efa/
 ├── .github/
+│   ├── CODEOWNERS                 Responsables por area
+│   ├── branch-protection.yml      Politica de proteccion de rama versionada
 │   ├── dependabot.yml
+│   ├── pull_request_template.md
+│   ├── prometheus-compliance.yml  Prometheus del runner para el gate
 │   └── workflows/
-│       ├── ci.yml
-│       ├── main.yml
-│       └── deploy.yml
+│       ├── ci.yml                 CI complementario (rama develop)
+│       ├── main.yml               CI: pruebas, cobertura, calidad, seguridad
+│       ├── compliance.yml         Gate de cumplimiento + despliegue en k8s
+│       └── deploy.yml             CD: gate, build, publicacion y despliegue
+├── compliance/
+│   ├── README.md
+│   └── policies/
+│       └── catalog.yml            Catalogo de 20 politicas verificables
 ├── demo/
+│   ├── Dockerfile
 │   ├── pom.xml
 │   └── src/
 │       ├── main/
@@ -51,15 +138,41 @@ backend-efa/
 │       │   │           ├── controller/
 │       │   │           ├── dto/
 │       │   │           ├── model/
+│       │   │           ├── observability/   Instrumentacion (metricas y logs)
 │       │   │           ├── repository/
 │       │   │           └── service/
 │       │   └── resources/
-│       │       └── application.properties
+│       │       ├── application.properties
+│       │       └── application-prod.properties
 │       └── test/
-├── evidencias/
-│   ├── backend-health.json
-│   ├── docker-compose-estado.txt
-│   └── docker-compose-servicios.txt
+├── docs/                          Documentacion tecnica de la evaluacion
+│   ├── OBSERVABILITY.md
+│   ├── DEPLOYMENT-K8S.md
+│   ├── COMPLIANCE.md
+│   ├── CI-CD-INTEGRATION.md
+│   ├── RUNBOOK.md
+│   ├── DECISION-RECORDS.md
+│   ├── EVIDENCIAS.md
+│   └── USO-DE-IA.md
+├── evidencias/                    Salidas reales de la verificacion
+├── infra/
+│   ├── k8s/                       Manifiestos de Kubernetes (Kustomize)
+│   │   ├── base/
+│   │   ├── overlays/prod/
+│   │   ├── observability/
+│   │   └── kind-config.yaml
+│   └── monitoring/                Stack de observabilidad local
+│       ├── docker-compose.monitoring.yml
+│       ├── prometheus/
+│       ├── loki/
+│       ├── alloy/
+│       └── grafana/
+├── scripts/
+│   ├── ci/                        Publicacion de metricas del pipeline
+│   ├── compliance/                Auditorias y gate de cumplimiento
+│   ├── evidencias/                Generador de evidencias
+│   ├── k8s/                       Despliegue automatizado en Kubernetes
+│   └── local/                     Utilidades de entorno local
 ├── Dockerfile
 ├── docker-compose.yml
 ├── MODELS.md
