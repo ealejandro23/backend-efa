@@ -1,6 +1,7 @@
 package Proyecto_EFA.demo.model;
 
 import jakarta.persistence.Column;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -11,9 +12,10 @@ import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
-@NoArgsConstructor
 @Entity
 public class Material {
+    @JsonCreator
+    public Material() { }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

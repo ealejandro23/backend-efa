@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -21,9 +22,17 @@ import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
-@NoArgsConstructor
+
 @Entity
+// Jackson no puede construir la subclase proxy que Hibernate genera para
+// esta entidad cuando otra prueba la ha cargado: "Cannot construct
+// instance of Usuario (no delegate- or property-based Creator)".
+// Esta anotacion hace que Jackson trate la entidad como su clase base
+// e ignore los campos del proxy, en lugar de intentar construirlo.
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Usuario {
+    @JsonCreator
+    public Usuario() { }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

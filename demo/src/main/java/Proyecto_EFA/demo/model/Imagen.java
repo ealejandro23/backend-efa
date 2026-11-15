@@ -1,5 +1,6 @@
 package Proyecto_EFA.demo.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -14,9 +15,10 @@ import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
-@NoArgsConstructor
 @Entity
 public class Imagen {
+    @JsonCreator
+    public Imagen() { }
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)

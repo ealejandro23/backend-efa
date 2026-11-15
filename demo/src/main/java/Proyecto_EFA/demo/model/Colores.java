@@ -3,6 +3,7 @@ package Proyecto_EFA.demo.model;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.Column;
@@ -19,9 +20,10 @@ import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
-@NoArgsConstructor
 @Entity
 public class Colores {
+    @JsonCreator
+    public Colores() { }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
