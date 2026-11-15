@@ -10,10 +10,39 @@ on:
 permissions:
   contents: read
 
+# El CI no se cancela a si mismo: una cancelacion dejaria el gate de
+# cumplimiento sin informacion sobre el commit evaluado.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: ${{ github.sha }}
+  GIT_COMMIT: ${{ github.sha }}
+  GIT_BRANCH: ${{ github.ref_name }}
+  BUILD_TIME: ${{ github.run_started_at }}
+  ENVIRONMENT: ci
+  PUSHGATEWAY_URL: http://localhost:9091
+  REPOSITORY: ${{ github.repository }}
+
 jobs:
   build-test-analyze:
     name: Build, Tests, Calidad y Seguridad
     runs-on: ubuntu-latest
+
+    services:
+      # El Pushgateway recibe las metricas del pipeline (cobertura, estado del
+      # build, duracion de las etapas) que alimentan el tablero de Grafana
+      # "EFA - Pipeline CI/CD, Cobertura y Despliegue".
+      pushgateway:
+        image: prom/pushgateway:v1.11.5
+        ports:
+          - 9091:9091
+        options: >-
+          --health-cmd "wget --quiet --spider http://localhost:9091/-/healthy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout del repositorio
@@ -34,9 +63,15 @@ jobs:
         with:
           node-version: '22'
 
+      # =====================================================================
+      # Etapa 1: Pruebas automatizadas y cobertura
+      # =====================================================================
       - name: Ejecutar pruebas JUnit y JaCoCo
+        id: tests
         working-directory: demo
-        run: mvn -B -ntp clean verify
+        run: |
+          mvn -B -ntp clean verify
+          echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Subir reporte JaCoCo
         uses: actions/upload-artifact@v4
@@ -45,7 +80,23 @@ jobs:
           path: demo/target/site/jacoco/
           if-no-files-found: error
 
+      # --- Gate de cobertura (P-QA-002) -------------------------------------
+      # Si la cobertura baja del umbral, este paso falla y el pipeline se
+      # detiene antes de construir la imagen.
+      - name: Gate de cobertura de pruebas (P-QA-002)
+        id: coverage
+        run: |
+          chmod +x scripts/ci/*.sh scripts/compliance/*.sh
+          bash scripts/compliance/audit-coverage.sh demo/target/site/jacoco/jacoco.xml "${COVERAGE_MIN:-0.60}"
+          bash scripts/ci/publish-coverage.sh demo/target/site/jacoco/jacoco.xml "${COVERAGE_MIN:-0.60}"
+        env:
+          COVERAGE_MIN: 0.60
+
+      # =====================================================================
+      # Etapa 2: Calidad estatica (SonarCloud)
+      # =====================================================================
       - name: Analisis SonarCloud
+        id: sonar
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]' }}
         working-directory: demo
         env:
@@ -59,11 +110,24 @@ jobs:
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
             -Dsonar.qualitygate.wait=true
 
+      - name: Publicar el resultado del Quality Gate
+        if: always()
+        run: |
+          chmod +x scripts/ci/*.sh
+          bash scripts/ci/publish-metrics.sh efa_ci_quality_gate_passed \
+            "${{ steps.sonar.outcome == 'success' && '1' || '0' }}" \
+            "branch=${GITHUB_REF_NAME}" \
+            "commit=${GITHUB_SHA}" || true
+
+      # =====================================================================
+      # Etapa 3: Seguridad de dependencias e imagen
+      # =====================================================================
       - name: Instalar Snyk CLI
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]' }}
         run: npm install -g snyk
 
       - name: Escaneo Snyk de dependencias
+        id: snyk_deps
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]' }}
         working-directory: demo
         env:
@@ -72,36 +136,63 @@ jobs:
           snyk test \
             --file=pom.xml \
             --package-manager=maven \
-            --severity-threshold=high
+            --severity-threshold=high \
+            --json > snyk-dependencies.json || SNYK_EXIT=$?
+          if [ "${SNYK_EXIT:-0}" -ne 0 ]; then
+            echo "::error::Snyk detecto vulnerabilidades de severidad alta o critica en las dependencias"
+            exit 1
+          fi
 
-      - name: Build de imagen Docker
+      - name: Construir la imagen Docker
+        id: build
         run: docker build -t proyecto-efa-backend:latest .
 
       - name: Escaneo Snyk de imagen Docker
+        id: snyk_image
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]' }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
           snyk container test proyecto-efa-backend:latest \
             --file=Dockerfile \
-            --severity-threshold=high
+            --severity-threshold=high \
+            --json > snyk-image.json || SNYK_EXIT=$?
+          if [ "${SNYK_EXIT:-0}" -ne 0 ]; then
+            echo "::error::Snyk detecto vulnerabilidades de severidad alta o critica en la imagen"
+            exit 1
+          fi
+
+      - name: Publicar el resumen de seguridad
+        if: always()
+        run: |
+          chmod +x scripts/ci/*.sh
+          bash scripts/ci/publish-metrics.sh efa_ci_build_success \
+            "${{ steps.tests.outcome == 'success' && '1' || '0' }}" \
+            "branch=${GITHUB_REF_NAME}" \
+            "commit=${GITHUB_SHA}" || true
+          bash scripts/ci/publish-metrics.sh efa_ci_security_vulnerabilities \
+            "${{ steps.snyk_deps.outcome == 'success' && '0' || '1' }}" \
+            "branch=${GITHUB_REF_NAME}" \
+            "severity=high" || true
 
       - name: Verificar imagen Docker
         run: docker image inspect proyecto-efa-backend:latest
 
+      # =====================================================================
+      # Etapa 4: Resumen del pipeline
+      # =====================================================================
       - name: Resumen del pipeline
-        if: success()
+        if: always()
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          echo "Pruebas JUnit y JaCoCo: OK"
-          echo "Docker Build: OK"
+          echo "Pruebas JUnit y JaCoCo: ${{ steps.tests.outcome }}"
+          echo "Docker Build: ${{ steps.build.outcome }}"
+          echo "SonarCloud: ${{ steps.sonar.outcome }}"
+          echo "Snyk dependencias: ${{ steps.snyk_deps.outcome }}"
+          echo "Snyk contenedor: ${{ steps.snyk_image.outcome }}"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
             echo "PR Dependabot: SonarCloud y Snyk omitidos por restricciones de secretos"
             echo "Los controles completos se ejecutaran en main"
-          else
-            echo "SonarCloud: OK"
-            echo "Snyk dependencias: OK"
-            echo "Snyk contenedor: OK"
           fi

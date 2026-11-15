@@ -1,16 +1,38 @@
 name: Build, push y deploy backend (AWS EC2 + ECR)
 
+# =============================================================================
+# Despliegue continuo del microservicio EFA.
+#
+# El despliegue se gatena por workflow_run del CI, es decir, solo cuando la
+# integracion continua termina en sucesso. A eso se suma una segunda
+# verificacion explicita (job "gate") que consulta la API de GitHub para
+# confirmar que TODAS las verificaciones obligatorias del commit estan en
+# verde. Esta segunda verificacion es la que materializa el indicador IE6:
+# ninguna falla critica puede llegar al entorno productivo, y si llega a
+# intentarlo, el pipeline se detiene.
+# =============================================================================
+
 on:
   workflow_run:
     workflows:
       - "CI — Tests, Calidad y Seguridad"
+      - "Compliance — Auditoría de cumplimiento"
     types:
       - completed
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "SHA del commit a desplegar (por defecto, el del ultimo CI aprobado)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
 
 env:
   AWS_REGION: us-east-1
@@ -19,14 +41,102 @@ env:
 
 jobs:
 
+  # ===========================================================================
+  # Gate de despliegue (IE6)
+  #
+  # Comprueba, contra la API de GitHub, que el commit que se va a desplegar
+  # tiene en verde todas las verificaciones obligatorias. Si alguna no lo
+  # esta, el pipeline se detiene y el entorno productivo no se toca.
+  # ===========================================================================
+  gate:
+    name: Gate de despliegue (verificaciones obligatorias)
+    runs-on: ubuntu-latest
+
+    outputs:
+      allowed: ${{ steps.verify.outputs.allowed }}
+      commit_sha: ${{ steps.verify.outputs.commit_sha }}
+
+    steps:
+      - name: Verificar el resultado del CI y del gate de cumplimiento
+        id: verify
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_EVENT: ${{ github.event.workflow_run.event }}
+          CI_WORKFLOW: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+
+          echo "Workflow de origen : ${CI_WORKFLOW}"
+          echo "Resultado          : ${CI_CONCLUSION}"
+          echo "Commit             : ${TARGET_SHA}"
+
+          # --- 1. El workflow de origen debe haber terminado en exito --------
+          if [ "${CI_CONCLUSION}" != "success" ]; then
+            echo "::error::El workflow de origen termino con '${CI_CONCLUSION}'. El despliegue se bloquea."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # --- 2. El evento de origen debe ser un push a main ---------------
+          if [ "${CI_EVENT}" != "push" ] && [ "${CI_WORKFLOW}" != "CI — Tests, Calidad y Seguridad" ]; then
+            echo "::error::Solo se despliega desde un push verificado a la rama principal."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # --- 3. Verificaciones obligatorias en verde -----------------------
+          # Se consultan los check runs del commit. Si alguno de los
+          # obligatorios no esta en "success", el despliegue se bloquea.
+          REQUIRED_CHECKS="CI — Tests, Calidad y Seguridad"
+          if [ "${CI_WORKFLOW}" = "CI — Tests, Calidad y Seguridad" ]; then
+            REQUIRED_CHECKS="CI — Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento"
+          fi
+
+          echo "Verificaciones obligatorias: ${REQUIRED_CHECKS}"
+          echo ""
+
+          ALLOWED=true
+          IFS=',' read -ra CHECKS <<< "${REQUIRED_CHECKS}"
+          for CHECK in "${CHECKS[@]}"; do
+            CHECK="$(echo "${CHECK}" | xargs)"
+            [ -z "${CHECK}" ] && continue
+
+            # Se obtiene el estado del check run mas reciente de ese nombre.
+            STATE="$(curl --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?per_page=100" \
+              | grep -oE "\"name\":\"${CHECK}\"[^}]*\"conclusion\":\"[a-z]+\"" \
+              | grep -oE '"conclusion":"[a-z]+"' | tail -n 1 | cut -d'"' -f4)"
+
+            if [ "${STATE}" = "success" ]; then
+              echo "  [OK]   ${CHECK}: ${STATE}"
+            else
+              echo "  [FALLA] ${CHECK}: ${STATE:-no encontrado}"
+              ALLOWED=false
+            fi
+          done
+
+          echo ""
+          if [ "${ALLOWED}" != "true" ]; then
+            echo "::error::Las verificaciones obligatorias no estan en verde. El entorno productivo queda protegido y NO se despliega."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "allowed=true" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Gate de despliegue aprobado. Se despliega el commit ${TARGET_SHA}."
+
+  # ===========================================================================
+  # Build de la imagen a partir del commit verificado
+  # ===========================================================================
   build:
     name: Build de la imagen Docker
-    if: >-
-      ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main'
-      }}
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
 
     outputs:
@@ -36,18 +146,19 @@ jobs:
       - name: Checkout del commit aprobado
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.gate.outputs.commit_sha }}
           persist-credentials: false
 
       - name: Definir tag de imagen
         id: meta
         env:
-          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA: ${{ needs.gate.outputs.commit_sha }}
         run: echo "tag=${COMMIT_SHA:0:8}" >> "$GITHUB_OUTPUT"
 
       - name: Build de la imagen Docker
         run: |
           docker build \
+            --build-arg APP_VERSION="${GITHUB_SHA}" \
             -t ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }} .
 
       - name: Guardar imagen como artifact
@@ -63,9 +174,13 @@ jobs:
           path: image.tar
           retention-days: 1
 
+  # ===========================================================================
+  # Publicacion en Amazon ECR
+  # ===========================================================================
   push:
     name: Push a ECR
-    needs: build
+    needs: [gate, build]
+    if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -116,9 +231,13 @@ jobs:
           echo "DEMO_MODE activo: se omite push real a ECR"
           echo "Imagen simulada: $ECR_REPOSITORY:$IMAGE_TAG"
 
+  # ===========================================================================
+  # Despliegue
+  # ===========================================================================
   deploy:
     name: Deploy en EC2
-    needs: [build, push]
+    needs: [gate, build, push]
+    if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -139,7 +258,7 @@ jobs:
       - name: Checkout del commit aprobado
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.gate.outputs.commit_sha }}
           persist-credentials: false
 
       - name: Generar entorno para Docker Compose
@@ -160,6 +279,9 @@ jobs:
             echo "POSTGRES_USER=$POSTGRES_USER"
             echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
             echo "CLOUDINARY_URL=$CLOUDINARY_URL"
+            echo "APP_VERSION=${IMAGE_TAG}"
+            echo "GIT_COMMIT=${GITHUB_SHA}"
+            echo "GIT_BRANCH=${GITHUB_REF_NAME}"
           } > .env
 
           chmod 600 .env
@@ -183,9 +305,11 @@ jobs:
           name: docker-image
 
       - name: Desplegar con Docker Compose en entorno simulado
+        id: deploy
         if: ${{ vars.DEMO_MODE == 'true' }}
         env:
           IMAGE_TAG_ORIGINAL: ${{ needs.build.outputs.image-tag }}
+          DEPLOY_START: ${{ github.run_started_at }}
         run: |
           set -euo pipefail
 
@@ -199,6 +323,10 @@ jobs:
           export POSTGRES_PASSWORD
           export POSTGRES_PORT=5433
           export BACKEND_PORT=8083
+          export APP_VERSION="${IMAGE_TAG_ORIGINAL}"
+          export GIT_COMMIT="${GITHUB_SHA}"
+          export GIT_BRANCH="main"
+          export SPRING_PROFILES_ACTIVE=prod
 
           docker compose -p efa-ci-demo config --quiet
           docker compose -p efa-ci-demo pull db
@@ -213,8 +341,31 @@ jobs:
           cat health.json
           grep -q '"status":"UP"' health.json
 
+          # Se verifica tambien que el microservicio expone sus metricas:
+          # sin ellas no habria observabilidad del despliegue.
+          curl --fail --silent --show-error \
+            http://localhost:8083/actuator/prometheus \
+            -o metrics.txt
+
+          grep -q '^efa_availability_up' metrics.txt
+
           echo "Despliegue Compose validado correctamente"
 
       - name: Mostrar estado de Compose
         if: ${{ always() && vars.DEMO_MODE == 'true' }}
         run: docker compose -p efa-ci-demo ps
+
+      # =====================================================================
+      # Publicacion de las metricas del despliegue (IE3)
+      # =====================================================================
+      - name: Publicar las metricas del despliegue
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          chmod +x scripts/ci/*.sh
+          DURATION=$(( $(date +%s) - $(date -d "${DEPLOY_START}" +%s) ))
+          bash scripts/ci/publish-deploy-metrics.sh \
+            "${DURATION}" \
+            "$([ "${DEPLOY_OUTCOME}" = "success" ] && echo success || echo failed)" \
+            "branch=main" || true

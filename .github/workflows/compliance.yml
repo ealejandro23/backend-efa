@@ -1,0 +1,209 @@
+# =============================================================================
+# Compliance - Gate de cumplimiento del Proyecto EFA
+#
+# Este workflow es el materializador del indicador IE6: implementa los
+# mecanismos de validacion que interrumpen automaticamente el pipeline ante
+# fallas criticas de seguridad o calidad, protegiendo el entorno productivo.
+#
+# El job "compliance-gate" es una verificacion obligatoria de la rama
+# principal (ver .github/branch-protection.yml). Si el gate falla, GitHub
+# impide el merge y, en consecuencia, el workflow de despliegue nunca se
+# dispara.
+#
+# Los servicios Prometheus y Pushgateway se ejecutan como contenedores de
+# servicio del runner: permiten publicar el resultado de cada politica y
+# consultar las alertas activas sin depender de un cluster externo.
+# =============================================================================
+
+name: Compliance — Auditoría de cumplimiento
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+# Evita que dos ejecuciones del gate compitan por los mismos puertos del
+# runner: el resultado de una auditoria se mezclaria con el de otra.
+concurrency:
+  group: compliance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PUSHGATEWAY_URL: http://localhost:9091
+  PROMETHEUS_URL: http://localhost:9090
+  REPOSITORY: ${{ github.repository }}
+
+jobs:
+  compliance-gate:
+    name: Compliance — Gate de cumplimiento
+    runs-on: ubuntu-latest
+
+    services:
+      pushgateway:
+        image: prom/pushgateway:v1.11.5
+        ports:
+          - 9091:9091
+        options: >-
+          --health-cmd "wget --quiet --spider http://localhost:9091/-/healthy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      prometheus:
+        image: prom/prometheus:v3.16.0
+        ports:
+          - 9090:9090
+        volumes:
+          - ./.github/prometheus-compliance.yml:/etc/prometheus/prometheus.yml:ro
+        options: >-
+          --health-cmd "wget --quiet --spider http://localhost:9090/-/healthy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preparar el entorno de auditoria
+        run: |
+          chmod +x scripts/compliance/*.sh scripts/ci/*.sh
+          mkdir -p evidencias/compliance
+
+      # --- Informativas -------------------------------------------------------
+      - name: Auditoría de secretos versionados (P-SEC-001)
+        run: bash scripts/compliance/audit-secrets.sh .
+
+      - name: Auditoría de Dockerfiles (P-SEC-002 / P-SEC-005)
+        run: bash scripts/compliance/audit-dockerfile.sh
+
+      - name: Auditoría de manifiestos Kubernetes (P-SEC-004)
+        run: bash scripts/compliance/audit-kubernetes.sh infra/k8s
+
+      - name: Auditoría de la integracion de observabilidad (P-OBS-001 / P-OBS-002)
+        run: bash scripts/compliance/audit-observability.sh
+
+      - name: Auditoría de la integridad del pipeline (P-QA-004 / P-CI-001)
+        run: bash scripts/compliance/audit-workflows.sh .github/workflows
+
+      - name: Auditoría de la documentacion (P-DOC-001 / P-DOC-002)
+        run: bash scripts/compliance/audit-docs.sh
+
+      # --- Informativas con tolerancia ---------------------------------------
+      # La proteccion de rama requiere permisos de administracion del
+      # repositorio; si el token no los tiene, la auditoria se omite y se
+      # informa explicitamente en el resumen.
+      - name: Verificacion de la proteccion de rama (P-SEC-006)
+        continue-on-error: false
+        run: |
+          if bash scripts/compliance/verify-branch-protection.sh "${GITHUB_REF_NAME}"; then
+            echo "::notice::P-SEC-006 verificada"
+          else
+            echo "::error::P-SEC-006 incumplida: la rama no cuenta con la proteccion exigida"
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUIRED_CHECKS: "CI — Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento"
+
+      # --- Gate principal -----------------------------------------------------
+      # Ejecuta todas las politicas y consolida el resultado. Cualquier
+      # politica bloqueante incumplida hace fallar ESTE job, lo que impide
+      # el merge y detiene el pipeline antes del despliegue.
+      - name: Gate de cumplimiento (todas las politicas)
+        id: compliance_gate
+        run: |
+          set +e
+          bash scripts/compliance/run-all.sh --continuar 2>&1 | tee evidencias/compliance/gate-cumplimiento.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          if [ "${EXIT_CODE}" -ne 0 ]; then
+            echo "::error::El gate de cumplimiento fue rechazado. El despliegue no se realizara."
+            exit 1
+          fi
+
+          echo "::notice::El gate de cumplimiento fue aprobado."
+
+      - name: Publicar el resultado de las politicas en el Pushgateway
+        if: always()
+        run: |
+          chmod +x scripts/ci/*.sh
+          bash scripts/ci/publish-metrics.sh efa_ci_compliance_gate_passed \
+            "${{ steps.compliance_gate.outputs.exit_code == '0' && '1' || '0' }}" \
+            "branch=${GITHUB_REF_NAME}" \
+            "commit=${GITHUB_SHA}" \
+            "workflow=${GITHUB_WORKFLOW}" || true
+
+      - name: Guardar el informe de cumplimiento
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informe-cumplimiento-${{ github.run_number }}
+          path: evidencias/compliance/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # Gate de despliegue en Kubernetes (IE2 + IE6)
+  #
+  # Despliega el microservicio en un cluster Kubernetes real (kind) e instala
+  # el stack de observabilidad. Es la continuacion natural del gate: solo se
+  # ejecuta si todas las verificaciones anteriores estan en verde.
+  # ===========================================================================
+  deploy-kubernetes:
+    name: Deploy en Kubernetes (kind) con observabilidad
+    needs: compliance-gate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar kind y kubectl
+        run: |
+          curl -fsSL https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 -o /usr/local/bin/kind
+          chmod +x /usr/local/bin/kind
+          curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
+          chmod +x /usr/local/bin/kubectl
+          kind version
+          kubectl version --client=true
+
+      - name: Obtener el repositorio del frontend
+        run: |
+          git clone --depth 1 https://github.com/FeOrtegah/Frontend-.git "${RUNNER_TEMP}/Frontend"
+          ls "${RUNNER_TEMP}/Frontend"
+
+      - name: Construir las imagenes Docker
+        run: |
+          docker build -t efa-backend:latest .
+          docker build -t efa-frontend:latest "${RUNNER_TEMP}/Frontend"
+
+      - name: Desplegar en el cluster y verificar la observabilidad
+        env:
+          FRONTEND_DIR: ${{ runner.temp }}/Frontend
+          IMAGE_TAG: latest
+          ENVIRONMENT: prod
+        run: |
+          chmod +x scripts/k8s/*.sh
+          bash scripts/k8s/deploy-kind.sh | tee evidencias/deploy-kubernetes.txt
+
+      - name: Publicar las metricas del despliegue
+        if: always()
+        run: |
+          chmod +x scripts/ci/*.sh
+          bash scripts/ci/publish-deploy-metrics.sh 0 failed || true
