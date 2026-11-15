@@ -13,6 +13,11 @@ public interface CategoriasRepository extends JpaRepository<Categorias, Integer>
     
 	@Query("SELECT c FROM Categorias c WHERE c.nombre = :nombre")
 	Optional<Categorias> findByNombre(@Param("nombre") String nombre);
+	// Variante tolerante a duplicados: devuelve el primer resultado en lugar de
+	// fallar. Necesaria cuando varias replicas del servicio inicializan los
+	// datos basicos a la vez (ver DataLoader).
+	@Query("SELECT c FROM Categorias c WHERE c.nombre = :nombre ORDER BY c.id ASC")
+	Optional<Categorias> findFirstByNombre(@Param("nombre") String nombre);
 	
 	@Query("SELECT c FROM Categorias c WHERE LOWER(c.nombre) LIKE LOWER(CONCAT('%', :nombre, '%'))")
 	List<Categorias> searchByNombre(@Param("nombre") String nombre);

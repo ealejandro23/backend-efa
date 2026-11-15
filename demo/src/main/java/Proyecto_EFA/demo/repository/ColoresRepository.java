@@ -13,6 +13,11 @@ public interface ColoresRepository extends JpaRepository<Colores, Integer> {
     
 	@Query("SELECT c FROM Colores c WHERE c.nombre = :nombre")
 	Optional<Colores> findByNombre(@Param("nombre") String nombre);
+	// Variante tolerante a duplicados: devuelve el primer resultado en lugar de
+	// fallar. Necesaria cuando varias replicas del servicio inicializan los
+	// datos basicos a la vez (ver DataLoader).
+	@Query("SELECT c FROM Colores c WHERE c.nombre = :nombre ORDER BY c.id ASC")
+	Optional<Colores> findFirstByNombre(@Param("nombre") String nombre);
 	
 	@Query("SELECT c FROM Colores c WHERE LOWER(c.nombre) LIKE LOWER(CONCAT('%', :nombre, '%'))")
 	List<Colores> searchByNombre(@Param("nombre") String nombre);

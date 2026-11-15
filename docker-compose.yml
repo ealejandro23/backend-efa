@@ -4,6 +4,10 @@ services:
     container_name: proyecto-efa-db
     restart: unless-stopped
 
+    labels:
+      service_name: efa-db
+      project: efa
+
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-efa}
       POSTGRES_USER: ${POSTGRES_USER:-efa_user}
@@ -25,10 +29,17 @@ services:
 
     mem_limit: 512m
 
+    networks:
+      - efa-net
+
   backend:
     image: ${ECR_REGISTRY:?ECR_REGISTRY es obligatorio}/${ECR_REPOSITORY:?ECR_REPOSITORY es obligatorio}:${IMAGE_TAG:-latest}
     container_name: proyecto-efa-backend
     restart: unless-stopped
+
+    labels:
+      service_name: efa-backend
+      project: efa
 
     depends_on:
       db:
@@ -40,6 +51,23 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
       CLOUDINARY_URL: ${CLOUDINARY_URL:-}
       PORT: 8080
+
+      # --- Perfil de Spring Boot ---------------------------------------------
+      # El perfil "prod" habilita el logging estructurado ECS, que Loki
+      # indexa por campos en lugar de por texto plano.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+
+      # --- Observabilidad (IE1) ---------------------------------------------
+      # Etiquetas comunes de metricas: identifican el servicio, la version
+      # desplegada y el entorno. Prometheus y Grafana las usan para filtrar.
+      SERVICE_NAME: efa-backend
+      ENVIRONMENT: ${ENVIRONMENT:-dev}
+      APP_VERSION: ${APP_VERSION:-dev}
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
+      GIT_BRANCH: ${GIT_BRANCH:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      TEAM: ${TEAM:-devops-efa}
+      LOG_FORMAT: ${LOG_FORMAT:-plain}
 
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8083}:8080"
@@ -55,5 +83,13 @@ services:
 
     mem_limit: 768m
 
+    networks:
+      - efa-net
+
 volumes:
   efa_pgdata:
+
+networks:
+  efa-net:
+    name: efa-net
+    driver: bridge

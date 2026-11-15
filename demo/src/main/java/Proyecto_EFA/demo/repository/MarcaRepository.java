@@ -13,6 +13,11 @@ public interface MarcaRepository extends JpaRepository<Marca, Integer> {
 	
 	@Query("SELECT m FROM Marca m WHERE m.nombre = :nombre")
 	Optional<Marca> findByNombre(@Param("nombre") String nombre);
+	// Variante tolerante a duplicados: devuelve el primer resultado en lugar de
+	// fallar. Necesaria cuando varias replicas del servicio inicializan los
+	// datos basicos a la vez (ver DataLoader).
+	@Query("SELECT m FROM Marca m WHERE m.nombre = :nombre ORDER BY m.id ASC")
+	Optional<Marca> findFirstByNombre(@Param("nombre") String nombre);
 	
 	@Query("SELECT m FROM Marca m WHERE LOWER(m.nombre) LIKE LOWER(CONCAT('%', :nombre, '%'))")
 	List<Marca> searchByNombre(@Param("nombre") String nombre);
