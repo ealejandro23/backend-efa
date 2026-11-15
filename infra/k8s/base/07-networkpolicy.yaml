@@ -28,13 +28,22 @@ spec:
       app.kubernetes.io/name: efa-frontend
   policyTypes: ["Ingress"]
   ingress:
+    # El Ingress (controlador nginx) sirve la aplicacion al usuario.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    # El propio frontend puede llamar a si mismo (SPA con enrutado).
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: efa-frontend
       ports:
         - protocol: TCP
-          port: 80
+          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -51,16 +60,123 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: efa-frontend
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# =============================================================================
+# El stack de observacion puede consultar las metricas de la aplicacion
+#
+# Sin esta politica, la denegacion por defecto bloquea el scrapeo: las
+# peticiones de Prometheus a los pods se quedarian esperando hasta el
+# timeout, y el dashboard mostraria los paneles de metricas vacios sin
+# ningun error visible en los logs de Prometheus.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-monitoring-egress
+  namespace: efa
+spec:
+  # Aplica al stack de observacion: Prometheus y Grafana.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["observabilidad"]
+  policyTypes: ["Egress"]
+  egress:
+    # Prometheus raspea las metricas del backend.
+    - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: efa-nginx-ingress
+              app.kubernetes.io/name: efa-backend
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Prometheus raspea las metricas del exporter de nginx.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-frontend
+      ports:
+        - protocol: TCP
+          port: 9113
+    # Grafana consulta a Prometheus (datasource) y a Loki (logs).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Prometheus consulta la API del kubelet (cAdvisor) por HTTPS.
+    - to:
         - namespaceSelector: {}
-          podSelector:
+      ports:
+        - protocol: TCP
+          port: 10250
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-prometheus-from-monitoring
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: ["observabilidad"]
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-backend-from-monitoring
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
             matchLabels:
               app.kubernetes.io/name: prometheus
       ports:
         - protocol: TCP
           port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-frontend-from-monitoring
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-frontend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9113
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

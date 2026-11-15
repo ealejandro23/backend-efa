@@ -35,9 +35,17 @@ scrape_configs:
         namespaces:
           names: ["efa"]
     relabel_configs:
+      # Solo se scrapea lo que se solicito explicitamente.
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
         action: keep
         regex: "true"
+      # Y solo los pods del microservicio: sin este filtro, este job tambien
+      # scraped el exporter de metricas del frontend, y las dos series
+      # quedaban mezcladas en el mismo objetivo.
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: keep
+        regex: "efa-backend"
+      # Ruta de metrics customizable (por defecto /actuator/prometheus).
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
         action: replace
         target_label: __metrics_path__
@@ -73,6 +81,10 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
         action: keep
         regex: "true"
+      # Solo los pods del frontend (mismo motivo que en el job del backend).
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: keep
+        regex: "efa-frontend"
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
         action: replace
         target_label: __metrics_path__
@@ -93,7 +105,13 @@ scrape_configs:
         target_label: app
 
   # --- cAdvisor del nodo -----------------------------------------------------
+  # En Kubernetes, el cAdvisor va embebido en el kubelet y se expone por
+  # HTTPS en el puerto 10250, bajo la ruta /metrics/cadvisor.
   - job_name: cadvisor
+    scheme: https
+    metrics_path: /metrics/cadvisor
+    tls_config:
+      insecure_skip_verify: true
     kubernetes_sd_configs:
       - role: node
     relabel_configs:

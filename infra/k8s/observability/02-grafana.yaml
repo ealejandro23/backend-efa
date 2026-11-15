@@ -83,9 +83,18 @@ spec:
             - name: data
               mountPath: /var/lib/grafana
       volumes:
+        # Grafana exige que los ficheros de aprovisionamiento esten en
+        # subdirectorios con nombre fijo (datasources/ y dashboards/).
+        # Las claves de un ConfigMap no pueden contener "/", por lo que se
+        # usa "items" para proyectar cada clave a su subdirectorio.
         - name: provisioning
           configMap:
             name: grafana-provisioning
+            items:
+              - key: datasources.yml
+                path: datasources/datasources.yml
+              - key: dashboards.yml
+                path: dashboards/dashboards.yml
         - name: dashboards
           configMap:
             name: grafana-dashboards
