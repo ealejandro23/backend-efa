@@ -1,0 +1,281 @@
+# =============================================================================
+# Politicas de cumplimiento - Proyecto EFA
+#
+# Cada politica tiene un identificador estable, una severidad y una
+# severidad de bloqueo. La severidad determina el resultado:
+#
+#   blocker : la politica incumplida detiene el pipeline. No se despliega.
+#   major   : la politica incumplida detiene el pipeline.
+#   minor   : la politica incumplida se informa, pero no detiene el pipeline.
+#
+# Los identificadores son los mismos que usan las reglas de alerta de
+# Prometheus y las etiquetas de las metricas de cumplimiento publicadas en
+# el Pushgateway, de modo que se pueda correlacionar la falla del pipeline
+# con la alerta y con el panel de Grafana.
+# =============================================================================
+
+version: 1
+project: proyecto-efa
+description: >-
+  Catalogo de politicas de cumplimiento evaluadas de forma automatica en cada
+  ejecucion del pipeline CI/CD. Es la traduccucion tecnica de los requisitos
+  de seguridad y calidad del sector aplicados al microservicio EFA.
+
+policies:
+
+  # ---------------------------------------------------------------------------
+  # P-SEC - Seguridad
+  # ---------------------------------------------------------------------------
+  - id: P-SEC-001
+    name: Sin secretos hardcodeados en el codigo
+    category: seguridad
+    severity: blocker
+    description: >-
+      No se deben encontrar credenciales, tokens ni claves de API versionadas
+      en el repositorio. Los secretos se inyectan en tiempo de ejecucion desde
+      GitHub Secrets o desde el gestor de secretos del cluster.
+    audit: scripts/compliance/audit-secrets.sh
+    rationale: >-
+      Un secreto versionado queda expuesto de forma permanente: aunque se
+      elimine del historial, las clonaciones y los forks previos lo conservan.
+
+  - id: P-SEC-002
+    name: Imagen de contenedor sin privilegios y con usuario no root
+    category: seguridad
+    severity: blocker
+    description: >-
+      Los contenedores no deben ejecutarse como root ni escalar privilegios.
+      El manifiesto de Kubernetes debe declarar un contexto de seguridad que
+      lo impida.
+    audit: scripts/compliance/audit-dockerfile.sh
+    rationale: >-
+      La ejecucion como root convierte una vulnerabilidad de aplicacion en
+      un compromiso del nodo completo.
+
+  - id: P-SEC-003
+    name: Dependencias sin vulnerabilidades criticas o altas
+    category: seguridad
+    severity: blocker
+    description: >-
+      El escaneo de dependencias (Snyk) y de imagen (Trivy) no debe reportar
+      vulnerabilidades de severidad alta o critica sin corregir.
+    audit: scripts/compliance/audit-dependencies.sh
+    rationale: >-
+      Las dependencias transitivas son el vector de entrada mas frecuente en
+      aplicaciones JavaScript y Java.
+
+  - id: P-SEC-004
+    name: Manifiestos de Kubernetes con contexto de seguridad
+    category: seguridad
+    severity: blocker
+    description: >-
+      Todo pod debe declarar runAsNonRoot, seccompProfile, drop de
+      capabilities y limites de recursos. No se permite el modo privilegiado
+      ni el montaje del socket de Docker.
+    audit: scripts/compliance/audit-kubernetes.sh
+    rationale: >-
+      Son las defences que reducen el impacto de una ejecucion de codigo no
+      autorizada dentro del cluster.
+
+  - id: P-SEC-005
+    name: Imagen base fijada a una version y con digest o tag inmutable
+    category: seguridad
+    severity: major
+    description: >-
+      Las imagenes base no deben usar el tag "latest" sin fijar, porque el
+      contenido de una misma etiqueta cambia sin aviso.
+    audit: scripts/compliance/audit-dockerfile.sh
+    rationale: >-
+      Un tag浮动 permite que un despliegue no reproducible cambie de
+      contenido entre dos ejecuciones del mismo commit.
+
+  - id: P-SEC-006
+    name: Reglas de proteccion de rama activas en GitHub
+    category: seguridad
+    severity: major
+    description: >-
+      La rama principal debe exigir revisiones, verificaciones obligatorias
+      y no permitir pushes directos.
+    audit: scripts/compliance/verify-branch-protection.sh
+    rationale: >-
+      La proteccion de rama es la barrera que impide integrar codigo que no
+      paso por las verificaciones automaticas.
+
+  # ---------------------------------------------------------------------------
+  # P-QA - Calidad
+  # ---------------------------------------------------------------------------
+  - id: P-QA-001
+    name: Quality Gate de analisis estatico aprobado
+    category: calidad
+    severity: blocker
+    description: >-
+      El analisis de SonarCloud (o la herramienta equivalente) debe aprobar
+      su Quality Gate antes de continuar con el pipeline.
+    audit: scripts/compliance/audit-quality-gate.sh
+    rationale: >-
+      Sin un gate objetivo, la revision de codigo se convierte en una
+      apreciacion subjetiva.
+
+  - id: P-QA-002
+    name: Cobertura de pruebas minima
+    category: calidad
+    severity: blocker
+    description: >-
+      La cobertura de lineas medida por JaCoCo no puede ser inferior al
+      umbral definido (60% por defecto).
+    audit: scripts/compliance/audit-coverage.sh
+    rationale: >-
+      La cobertura no prueba la correccion, pero si detecta de forma
+      objetiva las regresiones en las areas ya probadas.
+
+  - id: P-QA-003
+    name: Suite de pruebas ejecutada y en verde
+    category: calidad
+    severity: blocker
+    description: >-
+      Todas las pruebas automatizadas deben ejecutarse y aprobar antes de
+      construir la imagen.
+    audit: scripts/compliance/audit-tests.sh
+    rationale: >-
+      Es la verificacion mas basica y la que mas rapida detecta una
+      regresion funcional.
+
+  - id: P-QA-004
+    name: Acciones de GitHub fijadas a una version
+    category: calidad
+    severity: major
+    description: >-
+      Las acciones usadas en los workflows deben estar fijadas a una version
+      concreta, nunca a "master" o a una rama.
+    audit: scripts/compliance/audit-workflows.sh
+    rationale: >-
+      Una accion sin fijar puede ejecutar codigo arbitrario en el runner y
+      exponer los secretos del repositorio.
+
+  # ---------------------------------------------------------------------------
+  # P-CI - Integridad del pipeline
+  # ---------------------------------------------------------------------------
+  - id: P-CI-001
+    name: El despliegue solo ocurre con las verificaciones en verde
+    category: pipeline
+    severity: blocker
+    description: >-
+      El workflow de despliegue debe verificar el resultado del CI antes de
+      tocar el entorno, y no debe usar continue-on-error en las etapas de
+      seguridad o calidad.
+    audit: scripts/compliance/audit-workflows.sh
+    rationale: >-
+      Es la garantia de que ninguna falla critica llega a produccion.
+
+  - id: P-CI-002
+    name: El despliegue es trazable a un commit verificado
+    category: pipeline
+    severity: major
+    description: >-
+      El despliegue debe usar el SHA exacto que aprobo el CI, no una
+      referencia移动 a la ultima version de la rama.
+    audit: scripts/compliance/audit-workflows.sh
+    rationale: >-
+      Construir desde una referencia cambiante rompe la trazabilidad entre
+      el commit auditado y el artefacto desplegado.
+
+  - id: P-CI-003
+    name: Las etapas de seguridad y calidad no son tolerantes a fallos
+    category: pipeline
+    severity: blocker
+    description: >-
+      Ningun paso de SonarCloud, Snyk, auditoria de cumplimiento o pruebas
+      puede declarar continue-on-error: true.
+    audit: scripts/compliance/audit-workflows.sh
+    rationale: >-
+      continue-on-error convierte el control en decorativo: el pipeline
+      continua aunque el control haya fallado.
+
+  # ---------------------------------------------------------------------------
+  # P-OBS - Observabilidad
+  # ---------------------------------------------------------------------------
+  - id: P-OBS-001
+    name: El microservicio expone metricas y sonda de salud
+    category: observabilidad
+    severity: blocker
+    description: >-
+      La aplicacion debe exponer /actuator/prometheus y /actuator/health, y
+      el manifiesto de Kubernetes debe referenciarlos en las sondas.
+    audit: scripts/compliance/audit-observability.sh
+    rationale: >-
+      Sin metricas no hay forma objetiva de evaluar el impacto de un
+      despliegue ni de distinguir un fallo de una degradacion.
+
+  - id: P-OBS-002
+    name: Los manifiestos declaran como recolectar sus metricas
+    category: observabilidad
+    severity: major
+    description: >-
+      Los pods deben llevar las anotaciones prometheus.io/scrape, /path y
+      /port, de modo que el descubrimiento sea automatico.
+    audit: scripts/compliance/audit-observability.sh
+    rationale: >-
+      El descubrimiento declarativo evita que el equipo tenga que mantener
+      a mano una lista de objetivos que se desactualiza.
+
+  - id: P-OBS-003
+    name: Sin alertas criticas de disponibilidad activas
+    category: observabilidad
+    severity: blocker
+    description: >-
+      No debe haber ninguna alerta de severidad critica en estado "firing"
+      sobre la disponibilidad o el estado del servicio.
+    audit: scripts/compliance/audit-alerts.sh
+    rationale: >-
+      Desplegar sobre un servicio que ya esta fallando agrava la incidencia.
+
+  - id: P-OBS-004
+    name: Sin alertas criticas de tasa de errores activas
+    category: observabilidad
+    severity: blocker
+    description: >-
+      No debe haber ninguna alerta de severidad critica en estado "firing"
+      sobre la tasa de errores del microservicio.
+    audit: scripts/compliance/audit-alerts.sh
+    rationale: >-
+      Un despliegue sobre un microservicio que ya devuelve errores 5xx
+      multiplica el impacto sobre el usuario.
+
+  - id: P-OBS-005
+    name: Sin alertas criticas de saturacion de memoria activas
+    category: observabilidad
+    severity: blocker
+    description: >-
+      No debe haber ninguna alerta de severidad critica en estado "firing"
+      por uso de memoria superior al 95% del limite.
+    audit: scripts/compliance/audit-alerts.sh
+    rationale: >-
+      Desplegar con la memoria al limite provoca OOMKill y una caida del
+      servicio completa.
+
+  # ---------------------------------------------------------------------------
+  # P-DOC - Documentacion y trazabilidad
+  # ---------------------------------------------------------------------------
+  - id: P-DOC-001
+    name: Documentacion de integracion actualizada
+    category: documentacion
+    severity: minor
+    description: >-
+      La documentacion de observabilidad, despliegue y cumplimiento debe
+      existir y referenciar las herramientas efectivamente usadas.
+    audit: scripts/compliance/audit-docs.sh
+    rationale: >-
+      Una documentacion desactualizada es peor que ninguna: induce a
+      decisiones equivocadas.
+
+  - id: P-DOC-002
+    name: Uso de inteligencia artificial declarado
+    category: documentacion
+    severity: minor
+    description: >-
+      El informe debe declarar que herramientas de IA se usaron y como se
+      aplicaron.
+    audit: scripts/compliance/audit-docs.sh
+    rationale: >-
+      La declaracion de uso de IA es un requisito explicito de la pauta de
+      evaluacion.

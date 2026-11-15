@@ -1,0 +1,34 @@
+# =============================================================================
+# CODEOWNERS - responsables de cada area del repositorio
+#
+# GitHub notifica automaticamente a los propietarios cuando alguien abre un
+# Pull Request o una revision solicitada sobre los archivos que indica.
+#
+# Combinado con las reglas de proteccion de rama, garantiza que los cambios
+# en areas sensibles (pipeline, seguridad, despliegue) sean revisados por
+# alguien con el conocimiento especifico del area.
+# =============================================================================
+
+# --- Pipeline y automatizacion ----------------------------------------------
+# Quien cambia el pipeline debe revisar los cambios con detenimiento: es la
+# parte del sistema donde un error puede omitir un control.
+.github/workflows/     @ealejandro23
+.github/prometheus-compliance.yml @ealejandro23
+scripts/ci/            @ealejandro23
+scripts/compliance/    @ealejandro23
+
+# --- Configuracion de la aplicacion -----------------------------------------
+demo/src/main/resources/application.properties       @ealejandro23
+demo/src/main/resources/application-prod.properties @ealejandro23
+demo/src/main/java/Proyecto_EFA/demo/observability/  @ealejandro23
+
+# --- Infraestructura y despliegue -------------------------------------------
+infra/                 @ealejandro23
+Dockerfile             @ealejandro23
+docker-compose.yml     @ealejandro23
+
+# --- Documentacion -----------------------------------------------------------
+docs/                  @ealejandro23 @FeOrtegah
+compliance/            @ealejandro23 @FeOrtegah
+MODELS.md              @FeOrtegah
+README.md              @ealejandro23 @FeOrtegah
