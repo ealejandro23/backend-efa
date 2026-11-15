@@ -1,0 +1,115 @@
+# =============================================================================
+# Prometheus - configuracion para su ejecucion dentro del cluster
+#
+# Diferencias respecto a infra/monitoring/prometheus/prometheus.yml (entorno
+# local con Docker Compose):
+#   - El descubrimiento de pods usa kubernetes_sd_configs con las anotaciones
+#     prometheus.io/scrape que traen los manifiestos del proyecto.
+#   - La instancia de Loki y del Pushgateway no viven en el cluster, por lo
+#     que no se scrapean desde aqui.
+# =============================================================================
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "efa-cluster"
+    environment: "prod"
+    project: "efa"
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          component: monitoring
+
+  # --- Backend Spring Boot ---------------------------------------------------
+  - job_name: efa-backend-k8s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ["efa"]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement: "$1:$2"
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+        action: replace
+        target_label: version
+      - source_labels: [__meta_kubernetes_pod_annotation_efa_io_commit]
+        action: replace
+        target_label: commit
+
+  # --- Frontend (nginx) ------------------------------------------------------
+  - job_name: efa-frontend-k8s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ["efa"]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement: "$1:$2"
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: app
+
+  # --- cAdvisor del nodo -----------------------------------------------------
+  - job_name: cadvisor
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - action: labelmap
+        regex: "__meta_kubernetes_node_label_(.+)"
+      - target_label: node
+        replacement: "${KUBE_NODE:-kind-control-plane}"
+
+  # --- kube-state-metrics ----------------------------------------------------
+  - job_name: kubernetes-apiservers
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: "kubernetes"
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: "https"

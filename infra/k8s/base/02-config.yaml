@@ -1,0 +1,35 @@
+# =============================================================================
+# ConfigMap del Proyecto EFA
+#
+# El ConfigMap contiene la configuracion NO sensible. Las credenciales viven
+# en un Secret aparte, que el pipeline genera en tiempo de despliegue a partir
+# de GitHub Secrets (ver scripts/k8s/deploy-kind.sh).
+#
+# Nunca se versionan credenciales: este archivo no contiene ningun valor
+# sensible, solo parametros de operacion.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: efa-config
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-config
+    app.kubernetes.io/part-of: proyecto-efa
+data:
+  # --- Backend --------------------------------------------------------------
+  SPRING_PROFILES_ACTIVE: "prod"
+  PORT: "8080"
+  SERVICE_NAME: "efa-backend"
+  ENVIRONMENT: "prod"
+  APP_VERSION: "dev"
+  GIT_COMMIT: "unknown"
+  GIT_BRANCH: "unknown"
+  BUILD_TIME: "unknown"
+  TEAM: "devops-efa"
+  # --- Base de datos --------------------------------------------------------
+  POSTGRES_DB: "efa"
+  POSTGRES_USER: "efa_user"
+  # --- Frontend -------------------------------------------------------------
+  VITE_API_BASE_URL: "http://efa-backend.efa.svc.cluster.local:8080"
+  NGINX_PORT: "80"

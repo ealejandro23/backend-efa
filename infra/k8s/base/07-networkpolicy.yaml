@@ -1,0 +1,118 @@
+# =============================================================================
+# NetworkPolicy - control de trafico entre pods (defensa en profundidad)
+#
+# La politica "default deny" bloquea todo el trafico no permitido. Solo se
+# habilitan los flujos que la aplicacion necesita:
+#   1. El frontend puede llamar al backend.
+#   2. El backend puede llamar a la base de datos y salir a internet
+#      (necesario para la API de Cloudinary).
+#   3. Prometheus puede consultar las sondas de los pods.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-default-deny
+  namespace: efa
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-frontend-to-backend
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-frontend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-frontend
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-backend-from-frontend
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-frontend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-nginx-ingress
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-backend-egress
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+  policyTypes: ["Egress"]
+  egress:
+    # Salida hacia la base de datos.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Salida a la sonda de salud del propio pod (kubelet).
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Salida a servicios externos (Cloudinary, DNS).
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-db-from-backend
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: efa-db
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-backend
+      ports:
+        - protocol: TCP
+          port: 5432

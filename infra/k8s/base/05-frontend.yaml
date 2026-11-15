@@ -1,0 +1,180 @@
+# =============================================================================
+# Microservicio frontend - nginx
+#
+# El frontend se sirve con nginx, configurado para:
+#   1. Emitir el access log en JSON: Loki puede indexar status, metodo,
+#      tiempo de respuesta y ruta, de modo que se pueden filtrar los errores
+#      del frontend igual que los del backend.
+#   2. Exponer /healthz, usado por las sondas de Kubernetes.
+#   3. Exponer /nginx_status, que consume el exporter de metricas.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: efa-frontend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-frontend
+    app.kubernetes.io/component: microservicio
+    app.kubernetes.io/part-of: proyecto-efa
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: efa-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efa-frontend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-frontend
+    app.kubernetes.io/component: microservicio
+    app.kubernetes.io/part-of: proyecto-efa
+  annotations:
+    efa.io/observabilidad: "Prometheus, Loki y Grafana"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: efa-frontend
+        app.kubernetes.io/component: microservicio
+        app.kubernetes.io/part-of: proyecto-efa
+        app.kubernetes.io/version: dev
+      annotations:
+        # --- Anotaciones de descubrimiento para Prometheus -------------------
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9113"
+        efa.io/commit: unknown
+        efa.io/build-time: unknown
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-frontend
+      containers:
+        # --- nginx: sirve la aplicacion estatica ----------------------------
+        # nginx corre como el usuario "nginx" (uid 101) y escucha en el
+        # puerto 8080: un puerto por debajo de 1024 exigiria
+        # CAP_NET_BIND_SERVICE, que la politica de seguridad descarta.
+        - name: frontend
+          image: efa-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: NGINX_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: efa-config
+                  key: NGINX_PORT
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+
+        # --- Exporter de metricas de nginx ----------------------------------
+        # Convierte /nginx_status en metricas Prometheus: peticiones por
+        # codigo de estado, conexiones activas y tasa de aceptacion.
+        - name: metrics-exporter
+          image: nginx/nginx-prometheus-exporter:1.3.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --nginx.scrape-uri=http://localhost:8080/nginx_status
+            - --web.listen-address=:9113
+          ports:
+            - name: metrics
+              containerPort: 9113
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: efa-frontend
+  namespace: efa
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-frontend

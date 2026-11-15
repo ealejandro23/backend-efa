@@ -1,0 +1,160 @@
+# =============================================================================
+# Kustomize - configuracion base del Proyecto EFA
+#
+# La configuracion base contiene todo lo que es comun a cualquier entorno.
+# Las particularidades de cada entorno (dev, staging, prod) se aplican con
+# overlays sobre esta base.
+#
+# Uso:
+#   kubectl apply -k infra/k8s/base
+#   kubectl apply -k infra/k8s/overlays/prod
+#
+# Los metadatos de compilacion (version, commit, rama, fecha) se inyectan
+# mediante "replacements": Kustomize toma el valor del ConfigMap generado
+# a partir de build-info.env y lo coloca en los campos correspondientes del
+# Deployment y del ConfigMap de configuracion. Es el mecanismo declarativo
+# que garantiza que el cluster ejecuta exactamente la version revisada.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: efa
+
+resources:
+  - 00-namespace.yaml
+  - 01-rbac.yaml
+  - 02-config.yaml
+  - 03-postgres.yaml
+  - 04-backend.yaml
+  - 05-frontend.yaml
+  - 06-ingress.yaml
+  - 07-networkpolicy.yaml
+
+# Los recursos ServiceMonitor y PrometheusRule requieren el Prometheus
+# Operator instalado en el cluster. Se aplican por separado y de forma
+# condicional (ver scripts/k8s/deploy-kind.sh): el descubrimiento de
+# metricas por anotaciones funciona sin Operator, de modo que el proyecto
+# no depende de un componente opcional para cumplir sus objetivos.
+
+# Se usa "labels" con includeSelectors: false en lugar de "commonLabels".
+# commonLabels agrega las etiquetas tambien a spec.selector, y los selectores
+# de un Deployment son inmutables: cambiarlos despues invalida el recurso.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: proyecto-efa
+      app.kubernetes.io/managed-by: kustomize
+
+# --- Metadatos de compilacion ------------------------------------------------
+configMapGenerator:
+  - name: efa-build-info
+    envs:
+      - build-info.env
+
+# --- Inyeccion de los metadatos de compilacion ------------------------------
+replacements:
+  # --- Version --------------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: efa-build-info
+      fieldPath: data.APP_VERSION
+    targets:
+      - select:
+          kind: Deployment
+          name: efa-backend
+        fieldPaths:
+          - spec.template.metadata.labels.app\.kubernetes\.io/version
+      - select:
+          kind: Deployment
+          name: efa-frontend
+        fieldPaths:
+          - spec.template.metadata.labels.app\.kubernetes\.io/version
+      - select:
+          kind: ConfigMap
+          name: efa-config
+        fieldPaths:
+          - data.APP_VERSION
+
+  # --- Commit ---------------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: efa-build-info
+      fieldPath: data.GIT_COMMIT
+    targets:
+      - select:
+          kind: Deployment
+          name: efa-backend
+        fieldPaths:
+          - spec.template.metadata.annotations.efa\.io/commit
+      - select:
+          kind: Deployment
+          name: efa-frontend
+        fieldPaths:
+          - spec.template.metadata.annotations.efa\.io/commit
+      - select:
+          kind: ConfigMap
+          name: efa-config
+        fieldPaths:
+          - data.GIT_COMMIT
+
+  # --- Rama -----------------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: efa-build-info
+      fieldPath: data.GIT_BRANCH
+    targets:
+      - select:
+          kind: Deployment
+          name: efa-backend
+        fieldPaths:
+          - spec.template.metadata.annotations.efa\.io/branch
+      - select:
+          kind: ConfigMap
+          name: efa-config
+        fieldPaths:
+          - data.GIT_BRANCH
+
+  # --- Fecha de compilacion -------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: efa-build-info
+      fieldPath: data.BUILD_TIME
+    targets:
+      - select:
+          kind: Deployment
+          name: efa-backend
+        fieldPaths:
+          - spec.template.metadata.annotations.efa\.io/build-time
+      - select:
+          kind: Deployment
+          name: efa-frontend
+        fieldPaths:
+          - spec.template.metadata.annotations.efa\.io/build-time
+      - select:
+          kind: ConfigMap
+          name: efa-config
+        fieldPaths:
+          - data.BUILD_TIME
+
+  # --- Entorno --------------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: efa-build-info
+      fieldPath: data.ENVIRONMENT
+    targets:
+      - select:
+          kind: Namespace
+          name: efa
+        fieldPaths:
+          - metadata.labels.efa\.io/environment
+      - select:
+          kind: ConfigMap
+          name: efa-config
+        fieldPaths:
+          - data.ENVIRONMENT
+
+images:
+  - name: efa-backend
+    newTag: latest
+  - name: efa-frontend
+    newTag: latest

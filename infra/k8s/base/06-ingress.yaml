@@ -1,0 +1,47 @@
+# =============================================================================
+# Ingress - punto de entrada unico del proyecto
+#
+# Un unico Ingress sirve el frontend y enruta las llamadas de la API hacia el
+# microservicio backend, de modo que el navegador no necesita conocer la URL
+# interna del servicio.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: efa-ingress
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-ingress
+    app.kubernetes.io/part-of: proyecto-efa
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: efa.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: efa-backend
+                port:
+                  name: http
+          - path: /actuator
+            pathType: Prefix
+            backend:
+              service:
+                name: efa-backend
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: efa-frontend
+                port:
+                  name: http

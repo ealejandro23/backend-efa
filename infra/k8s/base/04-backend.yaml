@@ -1,0 +1,218 @@
+# =============================================================================
+# Microservicio backend - Spring Boot
+#
+# Elementos de observabilidad integrados de forma automatica:
+#   1. Anotaciones prometheus.io/scrape, /path y /port: Prometheus descubre
+#      y scrappea el pod sin configuracion adicional.
+#   2. Variables de entorno con metadatos de build (version, commit, rama):
+#      aparecen en las metricas y en los logs, y permiten saber que
+#      despliegue esta en ejecucion desde el panel.
+#   3. Perfil "prod": logging estructurado ECS que Loki indexa por campos.
+#   4. Etiquetas estandar de Kubernetes para correlacionar metricas, logs y
+#      eventos de despliegue.
+#
+# Elementos de disponibilidad:
+#   1. Liveness y readiness probes sobre /actuator/health.
+#   2. rolling update con maxUnavailable=0 para no dejar el servicio sin
+#      capacidad durante el despliegue.
+#   3. PodDisruptionBudget para que las evacuaciones programadas respeten la
+#      disponibilidad minima.
+#   4. topologySpreadConstraints para repartir las replicas entre nodos.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+    app.kubernetes.io/component: microservicio
+    app.kubernetes.io/part-of: proyecto-efa
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: efa-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+    app.kubernetes.io/component: microservicio
+    app.kubernetes.io/part-of: proyecto-efa
+  annotations:
+    efa.io/observabilidad: "Prometheus, Loki y Grafana"
+    efa.io/politica-calidad: "P-QA-002, P-SEC-001"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: efa-backend
+        app.kubernetes.io/component: microservicio
+        app.kubernetes.io/part-of: proyecto-efa
+        app.kubernetes.io/version: dev
+      annotations:
+        # --- Anotaciones de descubrimiento para Prometheus -------------------
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+        # --- Trazabilidad ----------------------------------------------------
+        efa.io/commit: unknown
+        efa.io/branch: unknown
+        efa.io/build-time: unknown
+    spec:
+      serviceAccountName: efa-backend
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      # --- Distribucion de replicas entre nodos -----------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: efa-backend
+      containers:
+        - name: backend
+          image: efa-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: efa-config
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://efa-db:5432/efa
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: efa-config
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: efa-secrets
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: CLOUDINARY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: efa-secrets
+                  key: CLOUDINARY_URL
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          # --- Sondas de salud -------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: efa-backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30

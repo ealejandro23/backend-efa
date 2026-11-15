@@ -1,0 +1,111 @@
+# =============================================================================
+# ServiceMonitor y PrometheusRule (Prometheus Operator)
+#
+# Estos recursos requieren el Prometheus Operator instalado en el cluster.
+# Cuando no esta disponible, el job "efa-backend-k8s" de prometheus.yml
+# realiza el mismo descubrimiento usando kubernetes_sd_configs. Ambos caminos
+# estan activos, de modo que el stack funciona con o sin Operator.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - efa
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-backend
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 15s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+          targetLabel: version
+        - sourceLabels: [__meta_kubernetes_pod_annotation_efa_io_commit]
+          targetLabel: commit
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: efa-frontend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-frontend
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - efa
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-frontend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: efa-alerts
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: efa-backend
+      rules:
+        - alert: EfaBackendIndisponible
+          expr: sum(efa_availability_up{namespace="efa"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+            cumplimiento: "P-OBS-003"
+          annotations:
+            summary: "Ninguna replica del backend EFA esta disponible"
+            description: "El deployment efa-backend no tiene ninguna replica lista. El despliegue se bloquea."
+
+        - alert: EfaBackendReplicasInsuficientes
+          expr: |
+            kube_deployment_status_replicas_available{namespace="efa", deployment="efa-backend"}
+              < kube_deployment_spec_replicas{namespace="efa", deployment="efa-backend"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "El backend EFA tiene menos replicas disponibles de las esperadas"
+
+        - alert: EfaMemoriaEnRiesgoDeOOM
+          expr: |
+            (
+              sum by (pod) (container_memory_working_set_bytes{namespace="efa", container!=""})
+              /
+              sum by (pod) (kube_pod_container_resource_limits{namespace="efa", resource="memory"})
+            ) > 0.95
+          for: 5m
+          labels:
+            severity: critical
+            cumplimiento: "P-OBS-005"
+          annotations:
+            summary: "Memoria al 95% del limite: riesgo de OOMKill"
+            description: "Aumentar el limite de memoria o corregir una fuga antes del siguiente despliegue."
+
+        - alert: EfaTasaErrores5xxAlta
+          expr: |
+            sum(rate(http_server_requests_seconds_count{namespace="efa", status=~"5.."}[5m])) > 0.1
+          for: 3m
+          labels:
+            severity: critical
+            cumplimiento: "P-OBS-004"
+          annotations:
+            summary: "Tasa de errores 5xx sostenida en el cluster"

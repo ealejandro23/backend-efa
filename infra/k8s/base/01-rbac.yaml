@@ -1,0 +1,66 @@
+# =============================================================================
+# ServiceAccount y RBAC
+#
+# El scraping de metricas por parte de Prometheus requiere leer informacion
+# de los pods (servicios y endpoints). En vez de usar la cuenta por defecto
+# del cluster, se crea una cuenta dedicada con permisos minimos (RBAC).
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: efa-prometheus
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-prometheus
+    app.kubernetes.io/component: observabilidad
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: efa-prometheus
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  # Nota: las reglas sobre recursos no namespaced (como "/metrics") no
+  # pueden declararse en un Role; deben ir en un ClusterRole. Ese
+  # ClusterRole es el que crea el despliegue de Prometheus dentro del
+  # cluster (infra/k8s/observability/01-prometheus.yaml).
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: efa-prometheus
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: efa-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: efa-prometheus
+    namespace: efa
+---
+# =============================================================================
+# ServiceAccount de la aplicacion
+#
+# El microservicio no necesita hablar con la API de Kubernetes: usa una
+# cuenta sin permisos (automountServiceAccountToken: false). Esto reduce la
+# superficie de ataque si un atacante logra ejecutar codigo en el pod.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: efa-backend
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-backend
+automountServiceAccountToken: false

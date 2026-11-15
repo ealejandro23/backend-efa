@@ -1,0 +1,125 @@
+# =============================================================================
+# Base de datos PostgreSQL
+#
+# Se despliega como StatefulSet para que el volumen tenga una identidad
+# estable ( PVC ) y los datos sobrevivan a un reinicio del pod.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: efa-db
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-db
+    app.kubernetes.io/component: base-de-datos
+    app.kubernetes.io/part-of: proyecto-efa
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: efa-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: efa-db
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-db
+    app.kubernetes.io/component: base-de-datos
+    app.kubernetes.io/part-of: proyecto-efa
+spec:
+  serviceName: efa-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: efa-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: efa-db
+        app.kubernetes.io/component: base-de-datos
+        app.kubernetes.io/part-of: proyecto-efa
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16.4-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: efa-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: efa-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: efa-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "efa_user", "-d", "efa"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "efa_user", "-d", "efa"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: efa-db-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: efa-db-data
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: efa-db
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi

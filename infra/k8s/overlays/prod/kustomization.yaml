@@ -1,0 +1,101 @@
+# =============================================================================
+# Overlay de produccion - Proyecto EFA
+#
+# Ajusta la configuracion base para el entorno de produccion simulado:
+# mas replicas, limites de recursos mas estrictos y el Ingress con el host
+# definitivo.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: efa
+
+resources:
+  - ../../base
+
+patches:
+  # --- Backend: 3 replicas y limites mas estrictos -------------------------
+  - target:
+      kind: Deployment
+      name: efa-backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: efa-backend
+        namespace: efa
+      spec:
+        replicas: 3
+        template:
+          spec:
+            containers:
+              - name: backend
+                resources:
+                  requests:
+                    cpu: 300m
+                    memory: 512Mi
+                  limits:
+                    cpu: "1"
+                    memory: 1Gi
+
+  # --- Frontend: 2 replicas --------------------------------------------------
+  - target:
+      kind: Deployment
+      name: efa-frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: efa-frontend
+        namespace: efa
+      spec:
+        replicas: 2
+
+  # --- Ingress con el host de produccion -------------------------------------
+  - target:
+      kind: Ingress
+      name: efa-ingress
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: efa-ingress
+        namespace: efa
+      spec:
+        tls:
+          - hosts:
+              - efa.local
+            secretName: efa-tls
+        rules:
+          - host: efa.local
+            http:
+              paths:
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: efa-backend
+                      port:
+                        name: http
+                - path: /actuator
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: efa-backend
+                      port:
+                        name: http
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: efa-frontend
+                      port:
+                        name: http
+
+# Los metadatos de compilacion los inyecta el bloque "replacements" de la
+# configuracion base, a partir de infra/k8s/base/build-info.env, que el
+# script de despliegue reescribe con los valores reales del commit.
+#
+# La etiqueta de las imagenes NO se fija aqui: el script de despliegue la
+# inyecta al aplicar los manifiestos, de modo que se realice un unico rollout
+# con la imagen correcta (ver scripts/k8s/deploy-kind.sh).

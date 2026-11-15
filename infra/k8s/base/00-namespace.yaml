@@ -1,0 +1,64 @@
+# =============================================================================
+# Namespace del Proyecto EFA
+#
+# Un namespace propio permite aplicar politicas de seguridad (NetworkPolicy,
+# Pod Security Admission) y quotas de recursos acotadas al proyecto.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: efa
+  labels:
+    name: efa
+    app.kubernetes.io/part-of: proyecto-efa
+    app.kubernetes.io/managed-by: kustomize
+    # Etiquetas de segmentacion: el selector de nodos del cluster y las
+    # NetworkPolicy utilizan estas mismas etiquetas.
+    efa.io/environment: prod
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# =============================================================================
+# ResourceQuota - limite de recursos del namespace
+#
+# Evita que un despliegue accidental consuma todo el cluster. El despliegue
+# debe quedar dentro del quota o Kubernetes lo rechaza (gate IE6).
+# =============================================================================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: efa-quota
+  namespace: efa
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    persistentvolumeclaims: "4"
+    pods: "30"
+---
+# =============================================================================
+# LimitRange - limites por defecto para los pods que no los declaren
+# =============================================================================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: efa-limits
+  namespace: efa
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 768Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 128Mi
