@@ -1,0 +1,23 @@
+# Snyk (https://snyk.io) policy file
+#
+# Excepciones de seguridad aceptadas temporalmente (politica P-SEC-003).
+#
+# Regla del proyecto: solo se registra una excepcion cuando NO existe una
+# version corregida disponible. Cada excepcion debe tener motivo, fecha de
+# creacion y fecha de vencimiento. Al vencer, Snyk vuelve a reportar la
+# vulnerabilidad y el pipeline se detiene de nuevo hasta que se corrija o
+# se revise la excepcion.
+version: v1.25.0
+ignore:
+  SNYK-UPSTREAM-OPENJDKJRE-22576909:
+    - '*':
+        reason: >-
+          RCE en OpenJDK JRE 21.0.13 incluido en la imagen base
+          eclipse-temurin:21.0.13_9-jre-alpine-3.23. La correccion (21.0.13.1)
+          aun no esta publicada como imagen oficial de Eclipse Temurin y Snyk
+          confirma que se usa la version mas segura disponible de la imagen
+          base. Dependabot (ecosistema docker, semanal) propondra la imagen
+          corregida cuando se publique.
+        expires: 2026-12-31T23:59:59.000Z
+        created: 2026-11-19T21:00:00.000Z
+patch: {}
