@@ -23,7 +23,7 @@ COPY demo/src ./src
 RUN mvn -B -ntp clean package -DskipTests
 
 # --- Etapa 2: Ejecucion ------------------------------------------------------
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21.0.13_9-jre-alpine-3.23
 
 LABEL org.opencontainers.image.title="efa-backend" \
       org.opencontainers.image.description="Microservicio backend del Proyecto EFA (Spring Boot 4)" \
