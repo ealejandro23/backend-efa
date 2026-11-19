@@ -133,11 +133,13 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
+          # El detalle se muestra en el log (evidencia legible) y ademas se
+          # guarda en JSON como artefacto del pipeline.
           snyk test \
             --file=pom.xml \
             --package-manager=maven \
             --severity-threshold=high \
-            --json > snyk-dependencies.json || SNYK_EXIT=$?
+            --json-file-output=snyk-dependencies.json || SNYK_EXIT=$?
           if [ "${SNYK_EXIT:-0}" -ne 0 ]; then
             echo "::error::Snyk detecto vulnerabilidades de severidad alta o critica en las dependencias"
             exit 1
@@ -156,11 +158,22 @@ jobs:
           snyk container test proyecto-efa-backend:latest \
             --file=Dockerfile \
             --severity-threshold=high \
-            --json > snyk-image.json || SNYK_EXIT=$?
+            --json-file-output=snyk-image.json || SNYK_EXIT=$?
           if [ "${SNYK_EXIT:-0}" -ne 0 ]; then
             echo "::error::Snyk detecto vulnerabilidades de severidad alta o critica en la imagen"
             exit 1
           fi
+
+      - name: Guardar los informes de Snyk
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informes-snyk-${{ github.run_number }}
+          path: |
+            demo/snyk-dependencies.json
+            snyk-image.json
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Publicar el resumen de seguridad
         if: always()
