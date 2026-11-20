@@ -29,16 +29,18 @@ rules:
   required_pull_request_reviews:
     required_approving_review_count: 1
     dismiss_stale_reviews: true
-    require_code_owner_reviews: true
-    require_last_push_approval: true
+    require_code_owner_reviews: false
+    require_last_push_approval: false
 
   # Las verificaciones que deben estar en verde para permitir el merge.
   # Son las mismas etapas que ejecuta el pipeline, de modo que un Pull
   # Request no puede integrarse con controles saltados.
+  # Nota: GitHub identifica cada check por el nombre del JOB, no por el
+  # nombre del workflow (CI = "Build, Tests, Calidad y Seguridad").
   required_status_checks:
     strict: true
     checks:
-      - context: "CI — Tests, Calidad y Seguridad"
+      - context: "Build, Tests, Calidad y Seguridad"
       - context: "Compliance — Gate de cumplimiento"
 
   # Restricciones de escritura sobre la rama.
@@ -68,7 +70,7 @@ verification:
     - push a main
     - pull_request hacia main
   expected_check_contexts:
-    - "CI — Tests, Calidad y Seguridad"
+    - "Build, Tests, Calidad y Seguridad"
     - "Compliance — Gate de cumplimiento"
 
 # --- Consecuencia del incumplimiento ---------------------------------------

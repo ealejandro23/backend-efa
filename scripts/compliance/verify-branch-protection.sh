@@ -79,7 +79,7 @@ if grep -q '"required_status_checks"' <<< "${PROTECTION}"; then
   HAS_REQUIRED_CHECKS=1
 fi
 
-REQUIRED_CHECKS="${REQUIRED_CHECKS:-CI — Tests, Calidad y Seguridad,Compliance — Auditoría de cumplimiento}"
+REQUIRED_CHECKS="${REQUIRED_CHECKS:-Build, Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento}"
 if [[ "${HAS_REQUIRED_CHECKS}" -eq 0 ]]; then
   echo "[BLOCKER] P-SEC-006 | ${BRANCH} | no hay verificaciones obligatorias configuradas"
   FINDINGS=$((FINDINGS + 1))

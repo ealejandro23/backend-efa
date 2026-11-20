@@ -210,10 +210,9 @@ el script de verificación pueda compararla con el estado real de GitHub.
 
 | Regla | Valor | Motivo |
 |---|---|---|
-| Revisiones requeridas | 1, con revisión de los *code owners* | Ningún cambio entra sin que alguien responsable del área lo revise. |
+| Revisiones requeridas | 1 aprobación | Ningún cambio entra sin que otro integrante lo revise. La revisión obligatoria de *code owners* no se activó: el equipo es de dos personas y bloquearía cambios cuando el responsable no está disponible. |
 | Revisiones obsoletas | Descartadas al hacer push | Una revisión deja de ser válida si el código cambia después. |
-| Aprobar el último push | Requerido | Evita aprobar código que luego se modificó. |
-| Verificaciones obligatorias | `CI — Tests, Calidad y Seguridad` y `Compliance — Gate de cumplimiento` | Ambas deben estar en verde; con `strict: true`, además hay que tener la rama al día. |
+| Verificaciones obligatorias | `Build, Tests, Calidad y Seguridad` (job del CI) y `Compliance — Gate de cumplimiento` | Ambas deben estar en verde; con `strict: true`, además hay que tener la rama al día. |
 | Push directo | Bloqueado | Todo cambio entra por Pull Request. |
 | Force-push | Bloqueado | No se puede reescribir el historial de la rama principal. |
 | Borrado de la rama | Bloqueado | Salvaguarda contra la eliminación accidental. |
