@@ -143,10 +143,13 @@ jobs:
 
       - name: Instalar kind y kubectl
         run: |
-          curl -fsSL https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 -o /usr/local/bin/kind
-          chmod +x /usr/local/bin/kind
-          curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
-          chmod +x /usr/local/bin/kubectl
+          # El runner ya trae kind y kubectl en /usr/local/bin como root:
+          # se descargan las versiones fijadas a un directorio temporal y se
+          # instalan con sudo para no depender de la version preinstalada.
+          curl -fsSL https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 -o "${RUNNER_TEMP}/kind"
+          curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o "${RUNNER_TEMP}/kubectl"
+          sudo install -m 0755 "${RUNNER_TEMP}/kind" /usr/local/bin/kind
+          sudo install -m 0755 "${RUNNER_TEMP}/kubectl" /usr/local/bin/kubectl
           kind version
           kubectl version --client=true
 
