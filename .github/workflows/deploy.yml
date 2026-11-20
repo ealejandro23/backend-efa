@@ -87,43 +87,61 @@ jobs:
           fi
 
           # --- 3. Verificaciones obligatorias en verde -----------------------
-          # Se consultan los check runs del commit. Si alguno de los
-          # obligatorios no esta en "success", el despliegue se bloquea.
-          REQUIRED_CHECKS="CI — Tests, Calidad y Seguridad"
-          if [ "${CI_WORKFLOW}" = "CI — Tests, Calidad y Seguridad" ]; then
-            REQUIRED_CHECKS="CI — Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento"
-          fi
+          # Se consultan los check runs del commit (el nombre de un check run
+          # es el nombre del JOB, no el del workflow). Ambos son obligatorios:
+          #   - "Build, Tests, Calidad y Seguridad"   (CI)
+          #   - "Compliance — Gate de cumplimiento"    (cumplimiento)
+          #
+          # El CD se dispara al terminar cada uno de los dos workflows. Si el
+          # otro todavia no termina, esta ejecucion no despliega y lo informa;
+          # la ejecucion disparada por el ultimo en terminar es la que
+          # despliega. Si cualquiera de los dos fallo, el despliegue se
+          # bloquea y este job termina en rojo.
+          REQUIRED_CHECKS="Build, Tests, Calidad y Seguridad|Compliance — Gate de cumplimiento"
 
-          echo "Verificaciones obligatorias: ${REQUIRED_CHECKS}"
+          echo "Verificaciones obligatorias: ${REQUIRED_CHECKS//|/, }"
           echo ""
 
-          ALLOWED=true
-          IFS=',' read -ra CHECKS <<< "${REQUIRED_CHECKS}"
+          CHECK_RUNS="$(curl --silent --show-error --fail \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?per_page=100")"
+
+          FAILED=false
+          PENDING=false
+          IFS='|' read -ra CHECKS <<< "${REQUIRED_CHECKS}"
           for CHECK in "${CHECKS[@]}"; do
-            CHECK="$(echo "${CHECK}" | xargs)"
-            [ -z "${CHECK}" ] && continue
+            # Check run mas reciente con ese nombre (status y conclusion).
+            RESULT="$(jq -r --arg name "${CHECK}" '
+              [.check_runs[] | select(.name == $name)]
+              | sort_by(.started_at) | last
+              | if . == null then "missing"
+                elif .status != "completed" then "pending"
+                else (.conclusion // "unknown") end' <<< "${CHECK_RUNS}")"
 
-            # Se obtiene el estado del check run mas reciente de ese nombre.
-            STATE="$(curl --silent --show-error \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?per_page=100" \
-              | grep -oE "\"name\":\"${CHECK}\"[^}]*\"conclusion\":\"[a-z]+\"" \
-              | grep -oE '"conclusion":"[a-z]+"' | tail -n 1 | cut -d'"' -f4)"
-
-            if [ "${STATE}" = "success" ]; then
-              echo "  [OK]   ${CHECK}: ${STATE}"
-            else
-              echo "  [FALLA] ${CHECK}: ${STATE:-no encontrado}"
-              ALLOWED=false
-            fi
+            case "${RESULT}" in
+              success)
+                echo "  [OK]        ${CHECK}: success" ;;
+              missing|pending)
+                echo "  [PENDIENTE] ${CHECK}: ${RESULT}"
+                PENDING=true ;;
+              *)
+                echo "  [FALLA]     ${CHECK}: ${RESULT}"
+                FAILED=true ;;
+            esac
           done
 
           echo ""
-          if [ "${ALLOWED}" != "true" ]; then
-            echo "::error::Las verificaciones obligatorias no estan en verde. El entorno productivo queda protegido y NO se despliega."
+          if [ "${FAILED}" = "true" ]; then
+            echo "::error::Una verificacion obligatoria fallo. El entorno productivo queda protegido y NO se despliega."
             echo "allowed=false" >> "$GITHUB_OUTPUT"
             exit 1
+          fi
+
+          if [ "${PENDING}" = "true" ]; then
+            echo "::notice::Hay verificaciones obligatorias en curso. Esta ejecucion no despliega; lo hara la que se dispare al terminar la ultima verificacion."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           echo "allowed=true" >> "$GITHUB_OUTPUT"
