@@ -158,6 +158,7 @@ jobs:
           snyk container test proyecto-efa-backend:latest \
             --file=Dockerfile \
             --severity-threshold=high \
+            --policy-path=.snyk \
             --json-file-output=snyk-image.json || SNYK_EXIT=$?
           if [ "${SNYK_EXIT:-0}" -ne 0 ]; then
             echo "::error::Snyk detecto vulnerabilidades de severidad alta o critica en la imagen"
