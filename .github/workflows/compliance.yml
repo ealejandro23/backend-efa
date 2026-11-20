@@ -90,7 +90,7 @@ jobs:
         run: bash scripts/compliance/verify-branch-protection.sh "${GITHUB_REF_NAME}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REQUIRED_CHECKS: "CI — Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento"
+          REQUIRED_CHECKS: "Build, Tests, Calidad y Seguridad,Compliance — Gate de cumplimiento"
 
       # --- Gate principal -----------------------------------------------------
       # Ejecuta todas las politicas y consolida el resultado. Cualquier
