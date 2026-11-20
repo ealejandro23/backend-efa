@@ -74,7 +74,7 @@ jobs:
           echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Subir reporte JaCoCo
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jacoco-report
           path: demo/target/site/jacoco/
@@ -167,7 +167,7 @@ jobs:
 
       - name: Guardar los informes de Snyk
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: informes-snyk-${{ github.run_number }}
           path: |
