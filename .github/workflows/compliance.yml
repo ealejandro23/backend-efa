@@ -168,6 +168,10 @@ jobs:
           FRONTEND_DIR: ${{ runner.temp }}/Frontend
           IMAGE_TAG: latest
           ENVIRONMENT: prod
+          # Trazabilidad: el commit y la rama quedan en las etiquetas de los
+          # pods y en /actuator/info (dashboard "Version desplegada").
+          GIT_COMMIT: ${{ github.sha }}
+          GIT_BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p evidencias
           chmod +x scripts/k8s/*.sh

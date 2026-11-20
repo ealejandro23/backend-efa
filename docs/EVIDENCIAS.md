@@ -15,7 +15,7 @@ no de ejemplos ideales.
 | Indicador | Ponderación | Qué demuestra | Dónde está la evidencia |
 |---|---|---|---|
 | **IE1** — Monitoreo de logs, métricas, errores y disponibilidad | 20 % | Prometheus scrapea el backend; las métricas propias (`efa_availability_up`, `efa_errors_total`, `efa_deploy_info`) están disponibles; los logs estructurados del backend y del frontend llegan a Loki con su identificador de correlación. | §2 |
-| **IE2** — Despliegue en entorno orquestado con observabilidad integrada | 20 % | El microservicio corre en Kubernetes (Kind) con sondas, HPA, PDB y NetworkPolicy; Prometheus descubre los pods por anotación y Grafana carga los dashboards dentro del cluster. | §3 |
+| **IE2** — Despliegue en entorno orquestado con observabilidad integrada | 20 % | El microservicio corre en Kubernetes con sondas, HPA, PDB y NetworkPolicy: en cada push dentro del pipeline (Kind en el runner) y de forma continua **en AWS** (EC2 + Kind, `us-east-1`); Prometheus descubre los pods por anotación y Grafana carga los dashboards dentro del cluster. | §3, §10 |
 | **IE3** — Dashboards con métricas clave | 10 % | Tres dashboards aprovisionados con duración de despliegue, cobertura, CPU, memoria y errores; las métricas del pipeline llegan al Pushgateway y las consulta Prometheus. | §4 |
 | **IE4** — Documentación de la integración | 10 % | Siete documentos en `docs/` que explican la integración, el impacto en las decisiones y el razonamiento técnico. | §5 |
 | **IE5** — Políticas de cumplimiento y auditoría automatizada | 20 % | Catálogo de 20 políticas verificables de forma mecánica, gate consolidado, reglas de protección de rama declaradas y verificadas, CODEOWNERS. | §6 |
@@ -296,35 +296,32 @@ protección exigida, **el pipeline se detiene**.
 
 ### 7.2 El gate de despliegue verifica los check-runs del commit
 
+GitHub identifica cada *check run* por el nombre del **job**, no del
+workflow. El gate exige los dos checks obligatorios del commit y lee la
+respuesta de la API con `jq`:
+
 ```bash
-# Fragmento del job "gate"
-STATE="$(curl --silent \
-  -H "Accept: application/vnd.github+json" \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs?per_page=100" \
-  | grep -oE "\"name\":\"${CHECK}\"[^}]*\"conclusion\":\"[a-z]+\"" \
-  | grep -oE '"conclusion":"[a-z]+"' | tail -n 1 | cut -d'"' -f4)"
-
-if [ "${STATE}" = "success" ]; then
-  echo "  [OK]   ${CHECK}: ${STATE}"
-else
-  echo "  [FALLA] ${CHECK}: ${STATE:-no encontrado}"
-  ALLOWED=false
-fi
+# Fragmento del job "gate" (deploy.yml)
+REQUIRED_CHECKS="Build, Tests, Calidad y Seguridad|Compliance — Gate de cumplimiento"
+RESULT="$(jq -r --arg name "${CHECK}" '
+  [.check_runs[] | select(.name == $name)]
+  | sort_by(.started_at) | last
+  | if . == null then "missing"
+    elif .status != "completed" then "pending"
+    else (.conclusion // "unknown") end' <<< "${CHECK_RUNS}")"
 ```
 
-Salida esperada cuando todo está correcto:
+- Si un check **falló**: el job termina en rojo y no se despliega.
+- Si un check **sigue en curso**: esa ejecución no despliega (termina en
+  verde con un aviso); despliega la ejecución que se dispara al terminar la
+  última verificación.
+
+Salida real de una ejecución bloqueada (CD #46, 19-11-2026):
 
 ```console
-  [OK]   CI — Tests, Calidad y Seguridad: success
-  [OK]   Compliance — Gate de cumplimiento: success
-```
-
-Y cuando falla una comprobación:
-
-```console
-  [FALLA] Compliance — Gate de cumplimiento: failure
-::error::Las verificaciones obligatorias no estan en verde. El entorno productivo queda protegido y NO se despliega.
+Workflow de origen : CI — Tests, Calidad y Seguridad
+Resultado          : failure
+::error::El workflow de origen termino con 'failure'. El despliegue se bloquea.
 ```
 
 ### 7.3 Las alertas críticas bloquean el despliegue
@@ -391,3 +388,51 @@ FRONTEND_DIR=../Frontend bash scripts/k8s/deploy-kind.sh
 # --- Requisito 5: gate de cumplimiento --------------------------------------
 bash scripts/compliance/run-all.sh --continuar
 ```
+
+---
+
+## 10. Ejecución de la EP3 en GitHub Actions y en AWS (19-11-2026)
+
+Registro de la sesión en la que se puso en verde `main` y se desplegó en la
+nube. Cada fila corresponde a una ejecución real; las capturas están en
+`evidencias/ep3/`.
+
+### 10.1 El pipeline se detuvo ante fallas reales (IE6)
+
+| Barrera | Ejecución | Qué detectó | Corrección |
+|---|---|---|---|
+| SonarCloud | CI #44 | `HTTP 403 Forbidden`: el `SONAR_TOKEN` había vencido (tokens de 30 días). | Token nuevo de 90 días y permiso *Execute Analysis*. |
+| Quality Gate | CI #44 (re-run) | `QUALITY GATE STATUS: FAILED`: cobertura del código nuevo 65,9 % (< 80 %). Las clases de observabilidad no tenían pruebas. | `ObservabilityComponentsTest` (25 pruebas). Quality Gate aprobado. |
+| Snyk dependencias | CI #47 y #48 | 2 vulnerabilidades **críticas** (deserialización) en `jackson-databind` 2.21.7 y 3.1.7. | Actualización a 2.21.8 y 3.1.8. |
+| Snyk imagen | CI #50 a #55 | Vulnerabilidad **crítica** (RCE) en OpenJDK 21.0.13 de la imagen base, sin imagen corregida publicada. | Imagen base fijada (`21.0.13_9-jre-alpine-3.23`) y excepción **documentada y con vencimiento** (31-12-2026) en `.snyk`. |
+| Gate de despliegue | CD #44–#47 | El workflow de origen terminó en `failure`. | El CD no se ejecutó hasta que CI y cumplimiento quedaron en verde. |
+
+Resultado: CI #56 y Compliance #21 en verde; CD #58–#59 completados.
+
+### 10.2 Protección de la rama `main` (IE5)
+
+- Regla clásica de protección en `main`: Pull Request obligatorio con 1
+  aprobación, aprobaciones obsoletas descartadas, checks obligatorios
+  `Build, Tests, Calidad y Seguridad` y `Compliance — Gate de cumplimiento`,
+  rama al día, historial lineal, sin *force push* ni borrado.
+- PR #22: el merge quedó **bloqueado** («Approval required», «2 required
+  checks pending») hasta que los checks pasaron y otro integrante aprobó;
+  después se integró con *squash and merge*.
+- Dependabot: alertas, actualizaciones de seguridad agrupadas y envío
+  automático del grafo de dependencias de Maven activados.
+
+### 10.3 Kubernetes en AWS con observabilidad (IE1, IE2, IE3)
+
+Detalle en `docs/DEPLOYMENT-K8S.md` §7.
+
+| Verificación | Resultado |
+|---|---|
+| Pods del namespace `efa` | backend, base de datos, frontend, Grafana, Prometheus y Pushgateway en `Running` |
+| `/actuator/health` | `UP` (base de datos, disco, liveness, readiness) |
+| Métricas propias `efa_*` | 76 series expuestas |
+| Targets de Prometheus | 6/6 `up` (incluido cAdvisor para CPU y memoria) |
+| Consulta real Grafana → Prometheus | `success` |
+| Dashboard «Panorama General» | Disponible, SLO 100 %, 0 errores 5xx, latencia p95 ≈ 6–15 ms, CPU y memoria por pod, versión `10eba1d` |
+| Dashboard «Pipeline CI/CD» | Despliegue 142 s, cobertura 91,8 %, build y Quality Gate aprobados, 12 políticas en OK |
+| NetworkPolicy `default deny` | Un pod sin etiquetas autorizadas no pudo conectarse al backend (verificación de aislamiento) |
+
