@@ -278,7 +278,39 @@ Cuando una política bloqueante se incumple:
 
 ---
 
-## 7. Archivos
+## 7. Gestión de hallazgos de seguridad y excepciones
+
+El Quality Gate de SonarCloud evalúa el **código nuevo**; sobre el código
+completo, SonarCloud reportó 14 hallazgos de seguridad (calificación D). Cada
+hallazgo se **corrigió** o se **aceptó con una justificación explícita**. Una
+aceptación no oculta el riesgo: queda registrada en SonarCloud (estado
+*Accepted*, con comentario) y en esta tabla, con su plan de remediación.
+
+### Corregidos
+
+| Hallazgo | Ubicación | Corrección |
+|---|---|---|
+| CORS abierto a cualquier origen (`@CrossOrigin(origins = "*")`) — 2 | `MetodoPagoController`, `MetodoEnvioController` | Se eliminaron las anotaciones; rige la lista blanca global de `CorsConfig`. |
+| Función de depuración (`printStackTrace`, `System.out`) y mensaje interno de la excepción devuelto al cliente — 1 | `VentaController` | Logger SLF4J (el detalle queda en el log, correlacionado por `traceId`) y mensaje genérico al cliente. Prueba: `errorInternoNoExponeDetallesDeLaExcepcion`. |
+
+### Aceptados con justificación
+
+| Hallazgo | Ubicación | Justificación | Plan |
+|---|---|---|---|
+| Protección CSRF deshabilitada — 1 | `SecurityConfig` | API REST sin sesión ni cookies de autenticación: el navegador no envía credenciales automáticamente, que es la condición para un ataque CSRF. | Si se incorpora autenticación con cookies de sesión, habilitar CSRF con `CookieCsrfTokenRepository`. |
+| Entidad JPA usada como `@RequestBody` (riesgo de *mass assignment*) — 10 | `EstadoController`, `MetodoEnvioController`, `MetodoPagoController`, `ProductoVentaController` | Son catálogos administrativos con campos simples; reemplazarlos por DTOs cambia el contrato de la API que consume el frontend y excede el alcance de esta evaluación (DevOps). Se registra como **deuda técnica**. | Introducir DTOs de entrada por endpoint junto con la autenticación de los endpoints administrativos. |
+
+> Limitación conocida relacionada: `SecurityConfig` usa
+> `.anyRequest().permitAll()`. Las herramientas del pipeline (SonarCloud,
+> Snyk, el gate de cumplimiento) no sustituyen la autenticación y
+> autorización de la aplicación.
+
+La excepción de Snyk sobre la imagen base (OpenJDK sin parche publicado) se
+gestiona del mismo modo en `.snyk`, con fecha de vencimiento.
+
+---
+
+## 8. Archivos
 
 | Archivo | Contenido |
 |---|---|

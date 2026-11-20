@@ -150,6 +150,17 @@ class VentaApiTest {
     }
 
     @Test
+    void errorInternoNoExponeDetallesDeLaExcepcion() throws Exception {
+        // Sin usuarioId, el repositorio recibe un id nulo y lanza una excepcion:
+        // el cliente recibe un mensaje generico y el detalle queda solo en el log.
+        mockMvc.perform(post(VENTAS).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"estadoId\":1,\"metodoPagoId\":1,\"metodoEnvioId\":1,"
+                                + "\"items\":[{\"productoId\":1,\"cantidad\":1,\"precio\":100.0}]}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string("Error al crear la venta"));
+    }
+
+    @Test
     void validacionesDeVentaRechazanDatosIncompletos() throws Exception {
         mockMvc.perform(post(VENTAS).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
