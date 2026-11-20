@@ -162,7 +162,7 @@ jobs:
 
     steps:
       - name: Checkout del commit aprobado
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.commit_sha }}
           persist-credentials: false
@@ -274,7 +274,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Checkout del commit aprobado
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.commit_sha }}
           persist-credentials: false
