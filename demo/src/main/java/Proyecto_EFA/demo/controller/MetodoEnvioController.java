@@ -9,7 +9,6 @@ import Proyecto_EFA.demo.service.MetodoEnvioService;
 
 @RestController
 @RequestMapping("/api/v1/metodos-envio")
-@CrossOrigin(origins = "*")
 public class MetodoEnvioController {
 
     @Autowired

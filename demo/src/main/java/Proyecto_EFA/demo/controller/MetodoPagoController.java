@@ -9,7 +9,6 @@ import Proyecto_EFA.demo.service.MetodoPagoService;
 
 @RestController
 @RequestMapping("/api/v1/metodos-pago")
-@CrossOrigin(origins = "*")
 public class MetodoPagoController {
 
     @Autowired

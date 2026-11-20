@@ -2,6 +2,8 @@ package Proyecto_EFA.demo.controller;
 
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,6 +36,8 @@ import Proyecto_EFA.demo.service.ProductoService;
 @RequestMapping("/api/v1/ventas")
 public class VentaController {
 
+    private static final Logger log = LoggerFactory.getLogger(VentaController.class);
+
     @Autowired
     private VentaService ventaService;
 
@@ -55,7 +59,8 @@ public class VentaController {
     @PostMapping
     public ResponseEntity<?> createVenta(@RequestBody VentaRequest ventaRequest) {
         try {
-            System.out.println("Recibiendo solicitud de venta: " + ventaRequest);
+            log.debug("Recibiendo solicitud de venta con {} productos",
+                    ventaRequest.getItems() == null ? 0 : ventaRequest.getItems().size());
 
             if (ventaRequest.getItems() == null || ventaRequest.getItems().isEmpty()) {
                 return ResponseEntity.badRequest().body("La venta debe tener al menos un producto");
@@ -108,16 +113,17 @@ public class VentaController {
                 venta.getItems().add(productoVenta);
             }
 
-            System.out.println("Venta creada con " + venta.getItems().size() + " productos");
+            log.info("Venta creada con {} productos", venta.getItems().size());
 
             Venta ventaCreada = ventaService.createVenta(venta);
 
             return ResponseEntity.status(201).body(ventaCreada);
 
         } catch (Exception e) {
-            System.err.println("Error creando venta: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().body("Error al crear la venta: " + e.getMessage());
+            // El detalle queda en el log (con el traceId de la peticion); al
+            // cliente no se le exponen mensajes internos de la excepcion.
+            log.error("Error creando la venta", e);
+            return ResponseEntity.internalServerError().body("Error al crear la venta");
         }
     }
 
