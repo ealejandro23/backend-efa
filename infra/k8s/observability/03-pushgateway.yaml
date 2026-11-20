@@ -1,0 +1,128 @@
+# =============================================================================
+# Pushgateway persistente - metricas del pipeline CI/CD
+#
+# En GitHub Actions el Pushgateway corre como service container del runner y
+# desaparece al terminar el job. Este Pushgateway vive en el cluster: recibe
+# las metricas del pipeline (build, etapas, cobertura, Quality Gate,
+# despliegues y politicas de cumplimiento) que publica
+# scripts/ci/collect-pipeline-metrics.sh, y Prometheus las raspa para el
+# dashboard "EFA - Pipeline CI/CD, Cobertura y Despliegue".
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/component: observabilidad
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pushgateway
+        app.kubernetes.io/component: observabilidad
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pushgateway
+          image: prom/pushgateway:v1.11.5
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9091
+          # Los valores respetan el LimitRange del namespace (minimo 50m de
+          # CPU y 128Mi de memoria por contenedor).
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pushgateway
+  namespace: efa
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/component: observabilidad
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pushgateway
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http
+---
+# Solo Prometheus puede leer el Pushgateway. La publicacion de metricas se
+# hace mediante "kubectl port-forward", que no atraviesa la red de pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-pushgateway-from-prometheus
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9091
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-prometheus-to-pushgateway
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pushgateway
+      ports:
+        - protocol: TCP
+          port: 9091

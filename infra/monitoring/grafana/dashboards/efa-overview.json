@@ -32,6 +32,7 @@
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": { "query": "label_values(efa_availability_up, environment)", "refId": "env-var" },
         "includeAll": true,
+        "allValue": ".*",
         "multi": true,
         "refresh": 1,
         "current": { "selected": true, "text": "All", "value": "$__all" }
@@ -43,6 +44,7 @@
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": { "query": "label_values(efa_availability_up{environment=~\"$environment\"}, service_instance)", "refId": "inst-var" },
         "includeAll": true,
+        "allValue": ".*",
         "multi": true,
         "refresh": 2,
         "current": { "selected": true, "text": "All", "value": "$__all" }
@@ -145,7 +147,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - (sum(rate(http_server_requests_seconds_count{job=~\"efa-backend.*\", status!~\"5..\", environment=~\"$environment\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=~\"efa-backend.*\", environment=~\"$environment\"}[5m])), 0.000001))",
+          "expr": "(sum(rate(http_server_requests_seconds_count{job=~\"efa-backend.*\", status!~\"5..\", environment=~\"$environment\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=~\"efa-backend.*\", environment=~\"$environment\"}[5m])), 0.000001))",
           "legendFormat": "disponibilidad"
         }
       ],
@@ -221,7 +223,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max(efa_deploy_info{environment=~\"$environment\"})",
+          "expr": "max by (version, commit) (efa_deploy_info{environment=~\"$environment\"})",
           "legendFormat": "{{version}} / {{commit}}"
         }
       ],

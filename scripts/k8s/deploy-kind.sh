@@ -190,6 +190,7 @@ kubectl create configmap grafana-provisioning \
 
 kubectl apply -f "${K8S_DIR}/observability/01-prometheus.yaml" --context "kind-${CLUSTER_NAME}"
 kubectl apply -f "${K8S_DIR}/observability/02-grafana.yaml" --context "kind-${CLUSTER_NAME}"
+kubectl apply -f "${K8S_DIR}/observability/03-pushgateway.yaml" --context "kind-${CLUSTER_NAME}"
 
 # --- 7.b. Recursos del Prometheus Operator (condicional) --------------------
 # Los ServiceMonitor y los PrometheusRule solo son validos si el Prometheus

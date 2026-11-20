@@ -32,6 +32,7 @@
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": { "query": "label_values(efa_ci_build_info, repository)", "refId": "repo-var" },
         "includeAll": true,
+        "allValue": ".*",
         "multi": true,
         "refresh": 2,
         "current": { "selected": true, "text": "All", "value": "$__all" }
@@ -43,6 +44,7 @@
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": { "query": "label_values(efa_ci_build_info{repository=~\"$repository\"}, branch)", "refId": "branch-var" },
         "includeAll": true,
+        "allValue": ".*",
         "multi": true,
         "refresh": 2,
         "current": { "selected": true, "text": "All", "value": "$__all" }

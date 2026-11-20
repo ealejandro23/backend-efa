@@ -105,6 +105,28 @@ código rápida no habría detectado.
 
 ---
 
+## Segunda etapa: puesta en verde del pipeline y despliegue en AWS
+
+En la sesión del 19-11-2026 se usó **Claude (Anthropic)** como asistente
+para diagnosticar fallas del pipeline y del despliegue y para proponer
+correcciones. El equipo ejecutó cada cambio, revisó los resultados y decidió
+qué integrar.
+
+| Uso concreto | Verificación realizada |
+|---|---|
+| Diagnóstico de los fallos del CI a partir de los logs (token de SonarCloud vencido, Quality Gate por cobertura, vulnerabilidades de Jackson y OpenJDK). | Re-ejecución de los workflows hasta verlos en verde en GitHub Actions. |
+| Redacción de `ObservabilityComponentsTest` (pruebas de las clases de observabilidad). | Las pruebas compilaron y pasaron en el CI; SonarCloud aprobó el Quality Gate. |
+| Corrección del gate del CD (nombres de los *check runs*, uso de `jq`), de la instalación de Kind en el runner y del paso de Snyk (detalle legible y artefactos). | Ejecuciones del CD bloqueando con CI en rojo y desplegando con todo en verde. |
+| Propuesta de la excepción temporal de Snyk (`.snyk`) para una vulnerabilidad sin parche publicado. | Snyk confirmó que no existía imagen corregida; la excepción vence el 31-12-2026. |
+| Comandos de AWS CloudShell para la EC2, el Security Group y el despliegue; NetworkPolicies adicionales, autenticación de Prometheus, Pushgateway persistente y recolector de métricas del pipeline. | Verificación en el cluster: pods en `Running`, targets `up`, consultas reales Grafana → Prometheus y dashboards con datos. |
+| Corrección de dos paneles del dashboard (SLO invertido, versión desplegada) y de las variables «All». | Revisión visual en Grafana con tráfico generado. |
+| Redacción de la actualización de `DEPLOYMENT-K8S.md` §7 y `EVIDENCIAS.md` §10. | Revisada por el equipo contra las salidas reales. |
+
+Las reflexiones individuales y las conclusiones del informe **no** se
+redactaron con esta herramienta.
+
+---
+
 ## Contenido redactado sin apoyo de IA
 
 Conforme a lo exigido por la pauta, **las reflexiones individuales de cada

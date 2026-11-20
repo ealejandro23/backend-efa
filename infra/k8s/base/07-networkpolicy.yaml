@@ -232,3 +232,82 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+---
+# Acceso a las interfaces web de observabilidad (Grafana y Prometheus).
+# Con "default deny", sin esta regla los NodePort quedan inaccesibles.
+# La restriccion de QUIEN puede entrar se aplica fuera del cluster: en AWS,
+# el Security Group solo abre los puertos 30090/30093 a la IP del equipo.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-dashboards-ingress
+  namespace: efa
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["grafana", "prometheus"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+---
+# Prometheus consulta el kubelet (cAdvisor: CPU/memoria de los contenedores)
+# y la API de Kubernetes, que escuchan en la IP del NODO, no en un pod: un
+# namespaceSelector no los cubre, por eso se usa ipBlock limitado a esos
+# puertos.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-prometheus-to-nodes
+  namespace: efa
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 10250
+        - protocol: TCP
+          port: 6443
+---
+# Grafana y Prometheus resuelven los servicios por nombre (por ejemplo el
+# datasource http://prometheus.efa.svc.cluster.local:9090). Sin esta regla,
+# "default deny" bloquea el DNS y todos los paneles de Grafana fallan.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: efa-allow-monitoring-dns
+  namespace: efa
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["observabilidad"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

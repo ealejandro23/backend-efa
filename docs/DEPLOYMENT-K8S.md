@@ -269,7 +269,100 @@ kubectl exec -n efa deploy/prometheus -- \
 
 ---
 
-## 7. Actualización a un cloud real
+## 7. Despliegue verificado en AWS (EC2 + Kind)
+
+El cluster del pipeline (job «Deploy en Kubernetes (kind)» de
+`compliance.yml`) vive solo mientras corre el runner. Para cumplir con un
+entorno orquestado **en la nube** y poder observarlo de forma continua, el
+mismo despliegue se ejecutó en una instancia EC2 de AWS (cuenta AWS Academy
+Learner Lab, región `us-east-1`).
+
+### 7.1 Por qué EC2 + Kind y no EKS
+
+| Criterio | EKS | EC2 + Kind |
+|---|---|---|
+| Disponibilidad en Learner Lab | Restringido: no se pueden crear los roles IAM que exige EKS. | Disponible con `LabInstanceProfile`. |
+| Costo | Plano de control (~US$0,10/h) + nodos. | Una `t3.large` (~US$0,08/h). |
+| Cambios en el proyecto | Ninguno en los manifiestos (ver §8). | **Ninguno**: se reutiliza `scripts/k8s/deploy-kind.sh`, el mismo que valida el pipeline. |
+
+Kind ejecuta los componentes reales de Kubernetes (API server, scheduler,
+kubelet, etcd), de modo que las sondas, el HPA, los PDB y las NetworkPolicy
+se comportan igual que en un cluster gestionado.
+
+### 7.2 Infraestructura creada (desde AWS CloudShell)
+
+| Recurso | Valor | Seguridad |
+|---|---|---|
+| Instancia EC2 | `efa-k8s`, `t3.large` (2 vCPU, 8 GiB), Ubuntu 24.04, disco gp3 de 30 GiB | Tag `Project=EFA-EP3` |
+| Security Group | `efa-k8s-sg` | SSH (22) solo desde la IP de CloudShell; Grafana (30090), Prometheus (30093) y app (8080) solo desde la IP del equipo. Nada abierto a `0.0.0.0/0`. |
+| Llave SSH | `efa-k8s-key` (ed25519) | Guardada solo en CloudShell. |
+
+La instancia se aprovisiona con *user-data*: instala Docker, Kind y kubectl,
+clona el backend y el frontend y ejecuta `deploy-kind.sh`.
+
+### 7.3 Problemas encontrados y cómo se resolvieron
+
+El despliegue en un nodo de 2 vCPU expuso defectos que el runner de GitHub
+(4 vCPU) no mostraba:
+
+| Síntoma | Causa | Solución |
+|---|---|---|
+| `efa-db-0` y `prometheus` en `Pending`: `0/1 nodes are available: 1 Insufficient cpu`. El backend en `CrashLoopBackOff` (sin base de datos). | Las *requests* sumaban ~2150m de CPU sobre 2000m disponibles. | Backend y frontend a 1 réplica; `minReplicas: 1` en el HPA. |
+| Un `rollout restart` del backend quedaba en `Pending`. | El *rolling update* crea el pod nuevo antes de borrar el viejo y no había CPU para ambos. | `maxSurge: 0, maxUnavailable: 1` en el nodo de capacidad limitada. |
+| Grafana y Prometheus respondían `HTTP 000` en los NodePort. | `efa-default-deny` bloqueaba también el tráfico de entrada a las interfaces web. | NetworkPolicy `efa-allow-dashboards-ingress` (puertos 3000 y 9090). Quién entra se controla en el Security Group. |
+| Target `cadvisor` (CPU/memoria) y `kubernetes-apiservers` en `down`. | (1) Prometheus no tenía permitido salir hacia la IP del nodo; (2) no enviaba el token de su ServiceAccount al kubelet. | NetworkPolicy `efa-allow-prometheus-to-nodes` (puertos 10250 y 6443) y `authorization.credentials_file` en `prometheus.yml`. |
+| Todos los paneles de Grafana con «No data» y error. | `default deny` bloqueaba el DNS a Grafana: no resolvía `prometheus.efa.svc.cluster.local`. | NetworkPolicy `efa-allow-monitoring-dns` (solo puerto 53 hacia `kube-dns`). |
+| Paneles vacíos con el filtro «All». | Las variables del dashboard sin `allValue` generaban `environment=~""`. | `allValue: ".*"` en las variables. |
+| «Disponibilidad (SLO 99%)» en 0 %. | La fórmula calculaba `1 - (ok/total)`, es decir, la tasa de error. | Fórmula corregida a `ok/total`. |
+| «Versión desplegada» mostraba `latest / unknown`. | El script no recibía `GIT_COMMIT` (`git` rechazó el repositorio por *dubious ownership*; en el pipeline la variable no se pasaba). | Etiqueta y anotación del pod con el commit; `GIT_COMMIT` y `GIT_BRANCH` agregados al job de Kubernetes en `compliance.yml`. |
+| Pod del Pushgateway rechazado. | El `LimitRange` del namespace exige mínimo 50m de CPU y 128Mi por contenedor. | Recursos del Pushgateway ajustados a la política. |
+
+### 7.4 Métricas del pipeline en el cluster
+
+En GitHub Actions el Pushgateway es un *service container* que desaparece al
+terminar el job, por lo que las métricas del pipeline no persistían. En el
+cluster de AWS se desplegó un Pushgateway persistente
+(`infra/k8s/observability/03-pushgateway.yaml`) y un recolector
+(`scripts/ci/collect-pipeline-metrics.sh`) que reconstruye las métricas
+desde sus fuentes oficiales: la API de GitHub Actions (build, etapas,
+despliegues, políticas de cumplimiento, protección de rama) y la API de
+SonarCloud (cobertura y Quality Gate). Un `cron` en la EC2 lo ejecuta cada
+10 minutos.
+
+### 7.5 Resultado verificado
+
+```console
+$ kubectl get pods -n efa
+efa-backend-...    1/1  Running
+efa-db-0           1/1  Running
+efa-frontend-...   2/2  Running
+grafana-...        1/1  Running
+prometheus-...     1/1  Running
+pushgateway-...    1/1  Running
+
+Prometheus targets: cadvisor, efa-backend-k8s, efa-frontend-k8s,
+                    kubernetes-apiservers, prometheus, pushgateway -> up
+Version desplegada (efa_deploy_info): 10eba1d / 10eba1d
+Metricas del pipeline: build_success=1, cobertura=0.918,
+                       duracion del despliegue=142 s, politicas aprobadas=12
+```
+
+### 7.6 Costos y apagado
+
+La sesión del Learner Lab detiene la instancia al terminar; al reiniciarla
+cambia la IP pública. Para eliminar todo al cerrar la evaluación:
+
+```bash
+source ~/efa-env.sh
+aws ec2 terminate-instances --instance-ids "$INSTANCE_ID"
+aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
+aws ec2 delete-security-group --group-id "$SG_ID"
+aws ec2 delete-key-pair --key-name efa-k8s-key
+```
+
+---
+
+## 8. Actualización a un cluster gestionado (EKS)
 
 El cambio de Kind a un cluster gestionado no requiere modificar los
 manifiestos. Los pasos son:
@@ -311,7 +404,7 @@ publicación en Amazon ECR; solo hay que desactivar `DEMO_MODE`.
 
 ---
 
-## 8. Evidencia de la evaluación
+## 9. Evidencia de la evaluación
 
 Las capturas y salidas de la ejecución verificada se encuentran en
 `evidencias/` y en `docs/EVIDENCIAS.md`.
