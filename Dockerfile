@@ -34,7 +34,7 @@ FROM builder AS tester
 RUN mvn -B -ntp test
 
 # --- Etapa 2: Ejecucion ------------------------------------------------------
-FROM eclipse-temurin:21.0.13_9-jre-alpine-3.23
+FROM eclipse-temurin:24-jre-alpine-3.22
 
 LABEL org.opencontainers.image.title="efa-backend" \
       org.opencontainers.image.description="Microservicio backend del Proyecto EFA (Spring Boot 4)" \
