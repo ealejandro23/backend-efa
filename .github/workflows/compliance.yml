@@ -115,7 +115,7 @@ jobs:
 
       - name: Guardar el informe de cumplimiento
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: informe-cumplimiento-${{ github.run_number }}
           path: evidencias/compliance/
@@ -179,7 +179,7 @@ jobs:
 
       - name: Guardar el informe del despliegue
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: informe-despliegue-k8s-${{ github.run_number }}
           path: evidencias/
