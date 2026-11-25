@@ -39,3 +39,6 @@ jobs:
       - name: Empaquetar aplicacion
         working-directory: demo
         run: mvn -B -ntp package -DskipTests
+
+      - name: Ejecutar pruebas dentro del contenedor
+        run: docker build --target tester -t proyecto-efa-backend:tester .

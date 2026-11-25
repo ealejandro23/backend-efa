@@ -145,6 +145,9 @@ jobs:
             exit 1
           fi
 
+      - name: Ejecutar pruebas dentro del contenedor
+        run: docker build --target tester -t proyecto-efa-backend:tester .
+
       - name: Construir la imagen Docker
         id: build
         run: docker build -t proyecto-efa-backend:latest .
