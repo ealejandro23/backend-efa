@@ -2,6 +2,7 @@
 # Dockerfile multietapa - Backend del Proyecto EFA
 #
 # Etapa 1: compilación con Maven y Java 21.
+# Etapa de pruebas: ejecuta las pruebas unitarias dentro del contenedor.
 # Etapa 2: imagen de ejecución mínima con la JRE de Temurin 21 sobre Alpine.
 #
 # La imagen final:
@@ -21,6 +22,16 @@ COPY demo/pom.xml .
 COPY demo/src ./src
 
 RUN mvn -B -ntp clean package -DskipTests
+
+# --- Etapa de pruebas (solo con --target tester) ------------------------------
+# Ejecuta las pruebas unitarias DENTRO del contenedor, con el mismo JDK y las
+# mismas dependencias con que se compila la imagen. El pipeline la construye
+# con:  docker build --target tester .
+# Si una prueba falla, el build falla y el pipeline se detiene. Un
+# "docker build" normal no pasa por esta etapa, porque la imagen final no
+# depende de ella.
+FROM builder AS tester
+RUN mvn -B -ntp test
 
 # --- Etapa 2: Ejecucion ------------------------------------------------------
 FROM eclipse-temurin:21.0.13_9-jre-alpine-3.23
