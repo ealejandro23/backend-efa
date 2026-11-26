@@ -257,6 +257,12 @@ jobs:
     needs: [gate, build, push]
     if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
+    # Entorno protegido: GitHub pausa este job hasta que un revisor
+    # autorizado (configurado en Settings > Environments > production)
+    # apruebe el despliegue. Quien dispara el pipeline no puede aprobarse
+    # a si mismo, y solo se despliega desde ramas protegidas.
+    environment:
+      name: production
 
     steps:
       - name: Configurar credenciales AWS
