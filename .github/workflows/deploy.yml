@@ -193,11 +193,73 @@ jobs:
           retention-days: 1
 
   # ===========================================================================
+  # Pruebas de aceptacion: la imagen candidata, con PostgreSQL real
+  # ===========================================================================
+  # Antes de publicar la imagen y de pedir la aprobacion para produccion,
+  # se levanta la imagen recien construida con su base de datos (Docker
+  # Compose, perfil prod) y se prueba la API de punta a punta con
+  # scripts/ci/acceptance-tests.sh. Si una prueba falla, los jobs "Push a
+  # ECR" y "Deploy en EC2" no se ejecutan.
+  acceptance:
+    name: Pruebas de aceptacion
+    needs: [gate, build]
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+
+    env:
+      ACC_REGISTRY: efa-acceptance
+      ACC_REPOSITORY: backend
+      ACC_TAG: candidate
+      ACC_BACKEND_PORT: "8084"
+      ACC_POSTGRES_PORT: "5434"
+
+    steps:
+      - name: Checkout del commit aprobado
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Descargar la imagen candidata
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Levantar la imagen candidata con PostgreSQL
+        env:
+          IMAGE_TAG_ORIGINAL: ${{ needs.build.outputs.image-tag }}
+          COMMIT_SHA: ${{ needs.gate.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          docker load -i image.tar
+          docker tag "${ECR_REPOSITORY}:${IMAGE_TAG_ORIGINAL}" "${ACC_REGISTRY}/${ACC_REPOSITORY}:${ACC_TAG}"
+
+          export ECR_REGISTRY="${ACC_REGISTRY}" ECR_REPOSITORY="${ACC_REPOSITORY}" IMAGE_TAG="${ACC_TAG}"
+          export BACKEND_PORT="${ACC_BACKEND_PORT}" POSTGRES_PORT="${ACC_POSTGRES_PORT}"
+          POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          export POSTGRES_PASSWORD
+          export SPRING_PROFILES_ACTIVE=prod ENVIRONMENT=acceptance
+          export APP_VERSION="${IMAGE_TAG_ORIGINAL}" GIT_COMMIT="${COMMIT_SHA}" GIT_BRANCH=main
+
+          docker compose -p efa-acceptance pull db
+          docker compose -p efa-acceptance up -d --no-build --pull never --wait --wait-timeout 180
+          docker compose -p efa-acceptance ps
+
+      - name: Ejecutar las pruebas de aceptacion
+        env:
+          GITHUB_SHA: ${{ needs.gate.outputs.commit_sha }}
+        run: bash scripts/ci/acceptance-tests.sh "http://localhost:${ACC_BACKEND_PORT}"
+
+      - name: Logs del backend (si fallan las pruebas)
+        if: failure()
+        run: docker logs --tail 150 proyecto-efa-backend || true
+
+  # ===========================================================================
   # Publicacion en Amazon ECR
   # ===========================================================================
   push:
     name: Push a ECR
-    needs: [gate, build]
+    needs: [gate, build, acceptance]
     if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
 
@@ -254,7 +316,7 @@ jobs:
   # ===========================================================================
   deploy:
     name: Deploy en EC2
-    needs: [gate, build, push]
+    needs: [gate, build, acceptance, push]
     if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     # Entorno protegido: GitHub pausa este job hasta que un revisor
