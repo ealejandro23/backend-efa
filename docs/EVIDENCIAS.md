@@ -436,3 +436,62 @@ Detalle en `docs/DEPLOYMENT-K8S.md` §7.
 | Dashboard «Pipeline CI/CD» | Despliegue 142 s, cobertura 91,8 %, build y Quality Gate aprobados, 12 políticas en OK |
 | NetworkPolicy `default deny` | Un pod sin etiquetas autorizadas no pudo conectarse al backend (verificación de aislamiento) |
 
+
+---
+
+## 11. Evaluación Final Transversal (25-11-2026)
+
+Cambios integrados para cubrir los requisitos del encargo de la EFT. Cada
+fila es un pull request fusionado en `main` con los checks obligatorios en
+verde y la aprobación de un integrante distinto del autor.
+
+| PR | Requisito de la EFT | Qué se agregó | Verificación |
+|---|---|---|---|
+| #27 | Pruebas unitarias dentro del contenedor (IE7) | Etapa `tester` en el `Dockerfile` y paso «Ejecutar pruebas dentro del contenedor» en `main.yml` y `ci.yml` | CI 45722506588: 55 pruebas, 0 fallas, dentro de `docker build --target tester` |
+| #28 | Hotfix con PR (IE3) y pipeline que se detiene (IE9) | Spring Boot 4.0.9 → 4.0.10 y PostgreSQL JDBC 42.7.14 → 42.7.15 | Ver §11.1 |
+| #29 | Publicación en Docker Hub si las pruebas pasan (IE7) | Login y push a `felipensio/efa-backend` solo con push a `main` y con todos los pasos previos en verde | CI 45731989966: tags `7563dc5` y `latest` publicados |
+| #30 | Aprobaciones para despliegues (IE13) | *Environment* `production`: revisores obligatorios, sin autoaprobación, sin bypass de administradores y solo ramas protegidas | CD 45734298474: el job «Deploy en EC2» quedó en `waiting` hasta la aprobación |
+| #31 | Pruebas de aceptación antes de producción (IE13) | Job «Pruebas de aceptacion» en `deploy.yml` y `scripts/ci/acceptance-tests.sh` | CD #84: 12 aprobadas, 0 fallidas, contra la imagen candidata con PostgreSQL; luego aprobación y despliegue |
+| #32 | AWS CloudWatch (IE11, IE12) | Agente de CloudWatch en la EC2, puente de métricas desde Prometheus, logs del backend, dashboard `EFA-Backend` y 3 alarmas | Métricas en `EFA/EC2`, logs `WARN` en `/efa/backend`, dashboard con datos |
+
+### 11.1 El pipeline se detuvo ante fallas reales
+
+| Ejecución | Falla | Resultado |
+|---|---|---|
+| CI 45720987181 (PR #27) | Snyk detectó 14 vulnerabilidades nuevas en dependencias: 7 críticas y 7 altas (driver de PostgreSQL 42.7.14 y Spring Framework 7.0.10) | El PR quedó bloqueado. Se corrigió con el hotfix #28 y `gh pr update-branch 27` |
+| CD 45723220799 | El workflow de cumplimiento del commit anterior terminó en `cancelled` | El gate bloqueó el despliegue: no se despliega a partir de una verificación incompleta |
+| CI 45733456644 | Maven no pudo descargar `spring-boot-starter-parent:4.0.10` dentro del contenedor (falla de red con Maven Central) | No se publicó ni se desplegó. Se volvió a ejecutar el mismo commit y pasó |
+
+### 11.2 Flujo completo del CD
+
+```
+Gate → Build de la imagen → Pruebas de aceptacion → Push → [aprobación de production] → Deploy en EC2
+```
+
+Si cualquier etapa falla, las siguientes no se ejecutan. El despliegue
+espera la aprobación de un revisor autorizado, que queda registrada en la
+ejecución.
+
+### 11.3 Observabilidad en AWS CloudWatch
+
+| Elemento | Detalle |
+|---|---|
+| Métricas de la instancia | `cpu_usage_user`, `cpu_usage_system`, `mem_used_percent`, `disk_used_percent` |
+| Métricas de la aplicación | `efa_backend_disponible`, `efa_peticiones_por_minuto`, `efa_errores_4xx_por_minuto`, `efa_errores_5xx_por_minuto`, `efa_latencia_p95_ms`, `efa_pods_running` |
+| Logs | Grupo `/efa/backend` (JSON ECS con `traceId`, versión y entorno) |
+| Dashboard | `EFA-Backend`: 8 paneles de métricas y una tabla de advertencias y errores |
+| Alarmas | `EFA-Backend-Caido`, `EFA-CPU-Alta`, `EFA-Errores-5xx` |
+
+Instalación y uso: `scripts/aws/setup-cloudwatch.sh` y
+`scripts/aws/create-cloudwatch-dashboard.sh`.
+
+### 11.4 Puntos abiertos
+
+- La imagen desplegada en la EC2 (Kind) es la de la EP3 (`10eba1d`); los
+  cambios de la EFT se validan en el pipeline, en las pruebas de
+  aceptación y en la imagen publicada en Docker Hub.
+- Istio no se aplicó en esta entrega; el análisis y el plan están en
+  `DECISION-RECORDS.md` (ADR-009).
+- El workflow «Build, push y deploy backend» corre con `DEMO_MODE`: el
+  push a ECR y el despliegue en la EC2 son simulados. Lo que se demuestra
+  ahí es el flujo de verificación y aprobación.

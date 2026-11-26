@@ -249,3 +249,49 @@ Estas decisiones deben revisarse si:
   Loki (evaluar la arquitectura de indexado),
 - el cluster de evaluación pasa a ser un cluster de producción (revisar
   ADR-003 y eldimensionamiento de los límites de recursos).
+
+---
+
+## ADR-009 — Malla de servicios con Istio
+
+**Estado:** pendiente (no aplicada en la entrega)
+**Contexto:** la pauta de la EFT pide usar Istio para manejar las redes y
+las métricas de los servicios. El clúster de evaluación es un Kind de un
+solo nodo sobre una EC2 `t3.large` (2 vCPU, 8 GiB). En la EP3, con dos
+réplicas del backend y del frontend, el planificador rechazó pods por
+`Insufficient cpu` y hubo que bajar a una réplica (ver
+`DEPLOYMENT-K8S.md` §7). El backend reserva 200m de CPU y 384Mi de
+memoria.
+
+**Qué aportaría Istio al proyecto:**
+
+| Capacidad | Uso en el proyecto |
+|---|---|
+| mTLS entre servicios (`PeerAuthentication` en modo `STRICT`) | Cifrado y autenticación del tráfico frontend → backend → base de datos, además de las NetworkPolicy actuales |
+| Métricas de tráfico de Envoy (`istio_requests_total`, `istio_request_duration_milliseconds`) | Tasa, errores y latencia entre servicios, sin cambiar el código, para los dashboards de Grafana |
+| Reintentos, *timeouts* y *circuit breaking* (`VirtualService`, `DestinationRule`) | Resiliencia del backend ante fallas de la base de datos |
+| División de tráfico por porcentaje | Despliegues *canary* de una versión nueva del backend |
+
+**Costo de recursos con los valores por defecto de Istio:** el plano de
+control (`istiod`) reserva 500m de CPU y 2Gi de memoria, y cada *sidecar*
+de Envoy reserva 100m de CPU y 128Mi por pod.
+
+**Plan de implementación:**
+
+1. Instalar con el perfil mínimo y recursos reducidos:
+   `istioctl install --set profile=minimal --set values.pilot.resources.requests.cpu=100m --set values.pilot.resources.requests.memory=256Mi -y`.
+2. Inyectar el *sidecar* solo en el backend
+   (`sidecar.istio.io/inject: "true"` en la plantilla del pod) con
+   `sidecar.istio.io/proxyCPU: 50m` y `sidecar.istio.io/proxyMemory: 64Mi`.
+3. Agregar a Prometheus un job que recoja las métricas de Envoy (puerto
+   15090) y un panel de tráfico entre servicios en Grafana.
+4. Aplicar `PeerAuthentication` en modo `PERMISSIVE` y, una vez
+   verificado, `STRICT`.
+5. Agregar la verificación al job de Kubernetes del pipeline.
+
+**Decisión y justificación:**
+
+> Esta sección la redacta el equipo, sin apoyo de IA (las justificaciones
+> técnicas son de autoría propia, según la pauta).
+
+[Decisión y justificación del equipo]
