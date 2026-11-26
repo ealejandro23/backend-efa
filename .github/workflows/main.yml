@@ -195,6 +195,34 @@ jobs:
       - name: Verificar imagen Docker
         run: docker image inspect proyecto-efa-backend:latest
 
+      # Publicacion en Docker Hub: solo con un push a main (es decir, despues
+      # de un merge aprobado) y solo si todos los pasos anteriores pasaron:
+      # pruebas, pruebas dentro del contenedor, Quality Gate y Snyk. En los
+      # pull requests la imagen se construye y se escanea, pero no se publica.
+      - name: Login en Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publicar la imagen en Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/efa-backend
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          docker tag proyecto-efa-backend:latest "${IMAGE}:${SHORT_SHA}"
+          docker tag proyecto-efa-backend:latest "${IMAGE}:latest"
+          docker push "${IMAGE}:${SHORT_SHA}"
+          docker push "${IMAGE}:latest"
+          {
+            echo "### Imagen publicada en Docker Hub"
+            echo "- \`${IMAGE}:${SHORT_SHA}\` (commit verificado)"
+            echo "- \`${IMAGE}:latest\`"
+            echo "- https://hub.docker.com/r/${IMAGE}/tags"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # =====================================================================
       # Etapa 4: Resumen del pipeline
       # =====================================================================
