@@ -490,6 +490,8 @@ Instalación y uso: `scripts/aws/setup-cloudwatch.sh` y
 - La imagen desplegada en la EC2 (Kind) es la de la EP3 (`10eba1d`); los
   cambios de la EFT se validan en el pipeline, en las pruebas de
   aceptación y en la imagen publicada en Docker Hub.
+- Istio no se aplicó en esta entrega; el análisis y el plan están en
+  `DECISION-RECORDS.md` (ADR-009).
 - El workflow «Build, push y deploy backend» corre con `DEMO_MODE`: el
   push a ECR y el despliegue en la EC2 son simulados. Lo que se demuestra
   ahí es el flujo de verificación y aprobación.
