@@ -127,6 +127,28 @@ redactaron con esta herramienta.
 
 ---
 
+## Tercera etapa: Evaluación Final Transversal
+
+En la sesión del 25-11-2026 se usó **Claude (Anthropic)** para revisar la
+pauta de la EFT contra el repositorio y proponer los cambios faltantes. El
+equipo ejecutó cada paso en AWS CloudShell, revisó los resultados y aprobó
+cada PR.
+
+| Uso concreto | Verificación realizada |
+|---|---|
+| Revisión de la pauta y lista de requisitos faltantes. | Contraste con el estado real del repositorio y de los workflows. |
+| Etapa `tester` del Dockerfile y pasos de pruebas en contenedor y publicación en Docker Hub (#27, #29). | CI en verde con 55 pruebas dentro del contenedor; tags publicados en Docker Hub. |
+| Diagnóstico de la falla de Snyk y propuesta del hotfix de versiones (#28). | Snyk en verde con Spring Boot 4.0.10 y PostgreSQL JDBC 42.7.15. |
+| Configuración del *environment* `production` y del job de aceptación con su script (#30, #31). | Prueba local en CloudShell (12/12) y ejecución real del CD con aprobación. |
+| Configuración del agente de CloudWatch, del puente de métricas, del dashboard y de las alarmas (#32). | Métricas y logs recibidos en CloudWatch; dashboard con datos. |
+| Redacción de `docs/BRANCHING.md` (salvo la justificación) y de `EVIDENCIAS.md` §11. | Revisada por el equipo contra el historial y las ejecuciones reales. |
+
+La justificación de la estrategia de ramificación (`docs/BRANCHING.md` §8),
+las conclusiones y las reflexiones individuales **no** se redactaron con
+esta herramienta.
+
+---
+
 ## Contenido redactado sin apoyo de IA
 
 Conforme a lo exigido por la pauta, **las reflexiones individuales de cada

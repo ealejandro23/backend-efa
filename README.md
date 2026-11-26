@@ -854,6 +854,10 @@ Se cuenta con evidencia de:
 
 El proyecto contempla una estrategia GitFlow para organizar el trabajo.
 
+La comparación de modelos de ramificación, las convenciones de commits y pull
+requests, los comandos del flujo y la trazabilidad de un cambio están en
+[`docs/BRANCHING.md`](docs/BRANCHING.md).
+
 ### Ramas
 
 | Rama | Propósito |
