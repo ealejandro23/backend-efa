@@ -1,0 +1,14 @@
+# Copia los logs del backend (pods de Kubernetes) a /var/log/efa/backend.log,
+# que el agente de CloudWatch envia al grupo de logs /efa/backend.
+[Unit]
+Description=EFA - logs del backend hacia CloudWatch
+After=network-online.target docker.service
+
+[Service]
+User=ubuntu
+ExecStart=/bin/bash -c 'exec kubectl logs -n efa deploy/efa-backend -f --since=1m >> /var/log/efa/backend.log 2>&1'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
